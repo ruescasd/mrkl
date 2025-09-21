@@ -6,20 +6,52 @@ use axum::{
     routing::get,
     Router,
     extract::State,
-    response::Json,
+    response::{Json, IntoResponse},
 };
 use std::net::SocketAddr;
 use serde_json::json;
 use ct_merkle::{
     mem_backed_tree::MemoryBackedTree,
-    HashableLeaf,
+    HashableLeaf, InclusionProof,
 };
 use sha2::Sha256;
+use axum::extract::Query;
+use serde::Deserialize;
+use base64;
+
+#[derive(Debug, Deserialize)]
+struct ProofQuery {
+    data: String,
+}
+
+// Type alias for our JSON responses
+type JsonResponse = Json<serde_json::Value>;
+
+// Fetches all entries from the database to rebuild the merkle tree
+async fn fetch_all_entries(
+    client: &tokio_postgres::Client,
+) -> Result<Vec<String>, tokio_postgres::Error> {
+    println!("🔄 Fetching all entries from database...");
+    
+    // Query all rows ordered by id to ensure consistent order
+    let rows = client
+        .query("SELECT id, data FROM append_only_log ORDER BY id", &[])
+        .await?;
+    
+    // Collect all entries
+    let entries: Vec<String> = rows
+        .into_iter()
+        .map(|row| row.get::<_, String>("data"))
+        .collect();
+    
+    println!("✅ Fetched {} entries from database", entries.len());
+    Ok(entries)
+}
 
 // Handler for the /root endpoint
 async fn get_merkle_root(
     State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+) -> JsonResponse {
     let tree = state.merkle_tree.read();
     let root = tree.root();
     Json(json!({
@@ -29,11 +61,107 @@ async fn get_merkle_root(
     }))
 }
 
+// Handler for the /proof endpoint that generates inclusion proofs
+async fn get_inclusion_proof(
+    Query(query): Query<ProofQuery>,
+    State(state): State<AppState>,
+) -> JsonResponse {
+    let tree = state.merkle_tree.read();
+    
+    // Get all items and find our target
+    let tree_size = tree.len();
+    let mut found_idx = None;
+    
+    // Linear search through the tree items
+    for i in 0..tree_size {
+        if tree.get(i as usize) == Some(&query.data) {
+            found_idx = Some(i);
+            break;
+        }
+    }
+    
+    match found_idx {
+        Some(idx) => {
+            // Generate the proof
+            let proof = tree.prove_inclusion(idx as usize);
+            let root = tree.root();
+            
+            // Verify the proof immediately as a sanity check
+            match root.verify_inclusion(&query.data, idx as u64, &proof) {
+                Ok(()) => {
+                    // Convert proof to bytes for transmission
+                    let proof_bytes: Vec<u8> = proof
+                        .as_bytes()
+                        .iter()
+                        .copied()
+                        .collect();
+                    
+                    Json(json!({
+                        "status": "ok",
+                        "index": idx,
+                        "proof": base64::encode(proof_bytes),
+                        "root": format!("{:?}", root.as_bytes())
+                    }))
+                },
+                Err(e) => Json(json!({
+                    "status": "error",
+                    "error": format!("Generated proof failed verification: {}", e)
+                }))
+            }
+        },
+        None => Json(json!({
+            "status": "error",
+            "error": "Data not found in the tree"
+        }))
+    }
+}
+
+
+// Handler for the /rebuild endpoint
+#[axum::debug_handler]
+async fn trigger_rebuild(
+    State(state): State<AppState>,
+) -> JsonResponse {
+    // First fetch all entries without holding the lock
+    match fetch_all_entries(&state.client).await {
+        Ok(entries) => {
+            // Now rebuild the tree with the fetched entries
+            let mut tree = state.merkle_tree.write();
+            
+            // Clear and rebuild
+            *tree = MemoryBackedTree::new();
+            for entry in entries {
+                tree.push(entry);
+            }
+            
+            // Get final state
+            let size = tree.len();
+            let root = tree.root();
+            let root_bytes = root.as_bytes().to_vec();
+            
+            // Drop the write guard before creating response
+            drop(tree);
+            
+            Json(json!({
+                "status": "ok",
+                "tree_size": size,
+                "merkle_root": format!("{:?}", root_bytes)
+            }))
+        },
+        Err(e) => Json(json!({
+            "status": "error",
+            "error": e.to_string()
+        }))
+    }
+}
+
 // Shared state between HTTP server and notification processor
 #[derive(Clone)]
 struct AppState {
     // The memory-backed merkle tree storing our log entries
     merkle_tree: Arc<parking_lot::RwLock<MemoryBackedTree<Sha256, String>>>,
+    // Database client for operations that need it
+    client: Arc<tokio_postgres::Client>,
 }
 
 #[tokio::main]
@@ -54,6 +182,7 @@ async fn main() -> Result<()> {
     // Initialize shared state with empty merkle tree
     let app_state = AppState {
         merkle_tree: Arc::new(parking_lot::RwLock::new(MemoryBackedTree::new())),
+        client: client.clone(),
     };
 
     // Create channel for communication between tasks
@@ -122,10 +251,24 @@ async fn main() -> Result<()> {
     client.batch_execute("LISTEN new_row_channel").await?;
     println!("🎧 Listening for new rows on channel 'new_row_channel'...");
 
+    // Do initial rebuild of the tree now that connection is established
+    println!("Performing initial tree rebuild...");
+    if let Ok(entries) = fetch_all_entries(&app_state.client).await {
+        let mut tree = app_state.merkle_tree.write();
+        *tree = MemoryBackedTree::new();
+        for entry in entries {
+            tree.push(entry);
+        }
+        println!("✅ Initial rebuild complete with {} entries", tree.len());
+    } else {
+        println!("⚠️ Failed to perform initial rebuild");
+    }
 
-    // Build our application with a route
+    // Build our application with routes
     let app = Router::new()
         .route("/root", get(get_merkle_root))
+        .route("/rebuild", get(trigger_rebuild))
+        .route("/proof", get(get_inclusion_proof))
         .with_state(app_state);
 
     // Run our HTTP server
