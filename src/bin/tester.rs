@@ -1,11 +1,11 @@
 use anyhow::Result;
-use mrkl::test_client::TestClient;
+use mrkl::client::Client;
 use rand::prelude::*;
 use std::time::Duration;
 use tokio::time;
 
 /// Regular interval test mode: adds one entry every N seconds
-async fn run_interval_test(client: &TestClient, interval_secs: u64) -> Result<()> {
+async fn run_interval_test(client: &Client, interval_secs: u64) -> Result<()> {
     let mut counter = 0;
     let mut rng = rand::thread_rng();
 
@@ -47,7 +47,7 @@ async fn run_interval_test(client: &TestClient, interval_secs: u64) -> Result<()
 /// Burst test mode: adds multiple entries in quick succession
 /// Consistency test mode: adds entries while periodically storing and verifying consistency
 /// between various tree states
-async fn run_consistency_test(client: &TestClient, interval_secs: u64) -> Result<()> {
+async fn run_consistency_test(client: &Client, interval_secs: u64) -> Result<()> {
     let mut counter = 0;
     let mut rng = rand::thread_rng();
     let mut historical_roots = Vec::new();
@@ -112,7 +112,7 @@ async fn run_consistency_test(client: &TestClient, interval_secs: u64) -> Result
     }
 }
 
-async fn run_burst_test(client: &TestClient, burst_size: usize, interval_secs: u64) -> Result<()> {
+async fn run_burst_test(client: &Client, burst_size: usize, interval_secs: u64) -> Result<()> {
     let mut counter = 0;
     let mut rng = rand::thread_rng();
 
@@ -162,7 +162,7 @@ async fn main() -> Result<()> {
     // Load environment variables from .env file
     dotenv::dotenv().ok();
     
-    let client = TestClient::new("http://127.0.0.1:3000").await?;
+    let client = Client::new("http://127.0.0.1:3000").await?;
     
     // Parse command line arguments for test mode
     let args: Vec<String> = std::env::args().collect();

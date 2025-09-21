@@ -21,6 +21,7 @@ base64 = "0.21"
 digest = "0.10"
 rand = "0.8"
 reqwest = { version = "0.11", features = ["json"] }
+serial_test = "3.2.0"
 
 # Define our binaries
 [[bin]]
@@ -28,8 +29,8 @@ name = "setup"
 path = "src/bin/setup.rs"
 
 [[bin]]
-name = "listener"
-path = "src/bin/listener.rs"
+name = "main"
+path = "src/bin/main.rs"
 
 [[bin]]
 name = "tester"

@@ -1,52 +1,21 @@
 use anyhow::Result;
-use reqwest::Client;
-use sha2::{Digest, Sha256, digest::Output};
+use reqwest::Client as HttpClient;
+use sha2::{Digest, Sha256};
 use tokio_postgres::{NoTls};
 use std::time::Duration;
-use ct_merkle::{InclusionProof, RootHash, ConsistencyProof as CtConsistencyProof};
-use crate::{LeafHash, MerkleProof, ConsistencyProof};
+use crate::{MerkleProof, ConsistencyProof};
 
-pub struct TestClient {
-    http_client: Client,
+pub struct Client {
+    http_client: HttpClient,
     db_client: tokio_postgres::Client,
     api_base_url: String,
 }
 
-impl MerkleProof {
-    /// Verifies this proof against the given data using ct-merkle's proof verification
-    pub fn verify(&self, data: &str) -> Result<bool> {
-        // Create the leaf hash from the input data
-        let leaf_hash = LeafHash::from_data(data);
-        
-        // Create a digest from our stored root bytes
-        let mut digest = Output::<Sha256>::default();
-        if self.root.len() != digest.len() {
-            return Err(anyhow::anyhow!("Invalid root hash length"));
-        }
-        digest.copy_from_slice(&self.root);
-        
-        // Create the root hash with the digest and actual tree size
-        let root_hash = RootHash::<Sha256>::new(
-            digest,
-            self.tree_size as u64
-        );
-        
-        // Create the inclusion proof from our stored bytes
-        let proof = InclusionProof::<Sha256>::from_bytes(self.proof_bytes.clone());
-        
-        // Verify using root's verification method
-        match root_hash.verify_inclusion(&leaf_hash, self.index as u64, &proof) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false)
-        }
-    }
-}
-
-impl TestClient {
+impl Client {
     /// Creates a new test client that interacts with both the HTTP API and database
     pub async fn new(api_base_url: &str) -> Result<Self> {
         // Set up HTTP client with reasonable timeouts
-        let http_client = Client::builder()
+        let http_client = HttpClient::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
 

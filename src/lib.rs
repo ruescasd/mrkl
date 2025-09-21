@@ -2,13 +2,43 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use ct_merkle::{HashableLeaf, RootHash};
+use ct_merkle::InclusionProof;
 use digest::{Update};
 use sha2::{Sha256, digest::Output};
 use serde::{Serialize, Deserialize};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use anyhow::Result;
 
-// Export test client module
-pub mod test_client;
+// Export modules
+pub mod routes;
+pub mod client;
+
+// Re-export route handlers
+pub use routes::{
+    get_merkle_root,
+    get_inclusion_proof,
+    get_consistency_proof,
+    trigger_rebuild,
+    fetch_all_entries,
+};
+
+// Re-export types used by handlers
+pub use routes::{ProofQuery, ConsistencyQuery};
+
+// Export AppState for use by handlers
+use ct_merkle::mem_backed_tree::MemoryBackedTree;
+/// Shared state between HTTP server and notification processor
+#[derive(Clone)]
+pub struct AppState {
+    /// The memory-backed merkle tree storing just the leaf hashes
+    pub merkle_tree: Arc<parking_lot::RwLock<MemoryBackedTree<Sha256, LeafHash>>>,
+    /// Mapping from data strings to their indices in the tree
+    pub index_map: IndexMap,
+    /// Mapping from root hashes to their tree sizes
+    pub root_map: RootMap,
+    /// Database client for operations that need it
+    pub client: Arc<tokio_postgres::Client>,
+}
 
 /// A wrapper around a merkle consistency proof that proves one tree is a prefix of another
 #[derive(Debug, Serialize, Deserialize)]
@@ -78,6 +108,35 @@ pub struct MerkleProof {
     pub proof_bytes: Vec<u8>,
     /// The total number of leaves in the tree at the time of proof generation
     pub tree_size: usize,
+}
+impl MerkleProof {
+    /// Verifies this proof against the given data using ct-merkle's proof verification
+    pub fn verify(&self, data: &str) -> Result<bool> {
+        // Create the leaf hash from the input data
+        let leaf_hash = LeafHash::from_data(data);
+        
+        // Create a digest from our stored root bytes
+        let mut digest = Output::<Sha256>::default();
+        if self.root.len() != digest.len() {
+            return Err(anyhow::anyhow!("Invalid root hash length"));
+        }
+        digest.copy_from_slice(&self.root);
+        
+        // Create the root hash with the digest and actual tree size
+        let root_hash = RootHash::<Sha256>::new(
+            digest,
+            self.tree_size as u64
+        );
+        
+        // Create the inclusion proof from our stored bytes
+        let proof = InclusionProof::<Sha256>::from_bytes(self.proof_bytes.clone());
+        
+        // Verify using root's verification method
+        match root_hash.verify_inclusion(&leaf_hash, self.index as u64, &proof) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false)
+        }
+    }
 }
 
 // Custom serialization for byte arrays to use base64
