@@ -45,6 +45,73 @@ async fn run_interval_test(client: &TestClient, interval_secs: u64) -> Result<()
 }
 
 /// Burst test mode: adds multiple entries in quick succession
+/// Consistency test mode: adds entries while periodically storing and verifying consistency
+/// between various tree states
+async fn run_consistency_test(client: &TestClient, interval_secs: u64) -> Result<()> {
+    let mut counter = 0;
+    let mut rng = rand::thread_rng();
+    let mut historical_roots = Vec::new();
+
+    println!("Starting consistency test (checkpoint every {} entries)...", 3);
+    println!("Will store roots periodically and verify consistency between all previous states");
+
+    loop {
+        counter += 1;
+        
+        // Generate some random data
+        let random_suffix: u32 = rng.r#gen();
+        let data = format!("consistency-{}-{}", counter, random_suffix);
+        
+        // Add the entry
+        println!("\n➕ Adding entry: {}", data);
+        let id = client.add_entry(&data).await?;
+        println!("✅ Added entry with ID: {}", id);
+        
+        // Small delay to allow the listener to process
+        time::sleep(Duration::from_millis(100)).await;
+        
+        // Get and verify the proof for this entry
+        println!("🔍 Getting proof for entry...");
+        let proof = client.get_proof(&data).await?;
+        println!("✅ Got proof at index {}", proof.index);
+        
+        // Get the current root
+        let current_root = client.get_root().await?;
+        println!("🌳 Current merkle root: {:?}", current_root);
+        
+        // Every 3 entries, store the root and verify consistency between all checkpoints
+        if counter % 3 == 0 {
+            println!("\n📸 Storing checkpoint {} at size {}", historical_roots.len() + 1, counter);
+            historical_roots.push(current_root.clone());
+            
+            // Get current root for comparison
+            let current_root = client.get_root().await?;
+
+            // Verify consistency between each historical root and the current state
+            for (i, old_root) in historical_roots.iter().enumerate() {
+                // Skip verification if the historical root is the current state
+                if *old_root == current_root {
+                    println!("ℹ️ Checkpoint {} matches current state, skipping verification", i + 1);
+                    continue;
+                }
+
+                println!("🔍 Verifying consistency between checkpoint {} and current state...", i + 1);
+                let is_consistent = client.verify_tree_consistency(old_root.clone()).await?;
+                assert!(is_consistent, "Current tree should be consistent with checkpoint {}", i + 1);
+                println!("✅ Verified consistency between checkpoint {} and current state", i + 1);
+            }
+        }
+        
+        // Verify both the root matches and the proof is valid
+        assert_eq!(current_root, proof.root, "Merkle root mismatch!");
+        assert!(proof.verify(&data)?, "Proof verification failed!");
+        println!("✅ Verified proof is valid and merkle root matches");
+        
+        // Wait for the next interval
+        time::sleep(Duration::from_secs(interval_secs)).await;
+    }
+}
+
 async fn run_burst_test(client: &TestClient, burst_size: usize, interval_secs: u64) -> Result<()> {
     let mut counter = 0;
     let mut rng = rand::thread_rng();
@@ -104,6 +171,10 @@ async fn main() -> Result<()> {
             let burst_size = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
             let interval = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
             run_burst_test(&client, burst_size, interval).await?;
+        }
+        Some("consistency") => {
+            let interval = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
+            run_consistency_test(&client, interval).await?;
         }
         _ => {
             let interval = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);

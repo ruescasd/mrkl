@@ -3,8 +3,8 @@ use reqwest::Client;
 use sha2::{Digest, Sha256, digest::Output};
 use tokio_postgres::{NoTls};
 use std::time::Duration;
-use ct_merkle::{InclusionProof, RootHash};
-use crate::{LeafHash, MerkleProof};
+use ct_merkle::{InclusionProof, RootHash, ConsistencyProof as CtConsistencyProof};
+use crate::{LeafHash, MerkleProof, ConsistencyProof};
 
 pub struct TestClient {
     http_client: Client,
@@ -153,5 +153,51 @@ impl TestClient {
         }
 
         Ok(())
+    }
+
+    /// Gets a consistency proof proving that the current tree state is consistent with an older root hash
+    pub async fn get_consistency_proof(&self, old_root: Vec<u8>) -> Result<ConsistencyProof> {
+        // Base64 encode the old root hash for transmission
+        let old_root_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &old_root);
+
+        let response = self.http_client
+            .get(&format!("{}/consistency", self.api_base_url))
+            .query(&[("old_root", old_root_b64)])
+            .send()
+            .await?;
+            
+        // Parse the response JSON into our ConsistencyProof struct
+        let response = response.json::<serde_json::Value>().await?;
+
+        // Check for error response
+        if response["status"].as_str() == Some("error") {
+            return Err(anyhow::anyhow!(
+                "Error getting consistency proof: {}",
+                response["error"].as_str().unwrap_or("unknown error")
+            ));
+        }
+        
+        // Parse into our structured ConsistencyProof type
+        let proof = serde_json::from_value(response["proof"].clone())?;
+        Ok(proof)
+    }
+
+    /// Verifies that the current tree state is consistent with a previously observed state.
+    /// Returns true if the current tree is a descendant of old_root (i.e., old tree is a prefix).
+    pub async fn verify_tree_consistency(
+        &self,
+        old_root: Vec<u8>
+    ) -> Result<bool> {
+        // Get consistency proof between the old root and current state
+        let proof = self.get_consistency_proof(old_root).await?;
+        
+        // Get current root to validate the proof matches current state
+        let current_root = self.get_root().await?;
+        if proof.new_root != current_root {
+            return Ok(false);
+        }
+        
+        // Verify the proof cryptographically
+        proof.verify().map_err(|e| anyhow::anyhow!("Proof verification failed: {}", e))
     }
 }
