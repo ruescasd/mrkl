@@ -59,14 +59,14 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
             CONSTRAINT processed_log_immutable CHECK (processed_at = processed_at)
         );
         
-        CREATE UNIQUE INDEX processed_log_data_idx ON processed_log(data);
+        CREATE UNIQUE INDEX processed_log_data_idx ON processed_log(source_id);
     "#).await?;
     println!("✅ Table 'processed_log' is ready.");
 
     // 3. Create the processing function
     client.batch_execute(r#"
         CREATE OR REPLACE FUNCTION process_next_batch(
-            batch_size INT DEFAULT 1000
+            batch_size INT DEFAULT 10000
         ) RETURNS TABLE (
             rows_processed BIGINT,
             first_id BIGINT,
@@ -95,10 +95,8 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
                     al.leaf_hash,
                     ROW_NUMBER() OVER (ORDER BY al.id) as row_num
                 FROM append_only_log al
-                WHERE NOT EXISTS (
-                    -- Exclude already processed rows
-                    SELECT 1 FROM processed_log pl WHERE pl.source_id = al.id
-                )
+                LEFT JOIN processed_log pl ON pl.source_id = al.id
+                WHERE pl.id IS NULL
                 -- Ensure deterministic ordering
                 ORDER BY al.id
                 -- Limit batch size
@@ -186,35 +184,7 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
     "#).await?;
     println!("✅ Function 'validate_processed_sequence' is ready.");
 
-    // 6. Add some test data if specified
-    if reset {
-        println!("📝 Adding test data...");
-        client.batch_execute(r#"
-            -- Function to calculate SHA256 hash
-            CREATE OR REPLACE FUNCTION sha256(text) RETURNS bytea AS $$
-            BEGIN
-                RETURN decode(
-                    substring(
-                        encode(
-                            digest($1, 'sha256'::text)::bytea, 
-                            'hex'
-                        ), 
-                        1
-                    ), 
-                    'hex'
-                );
-            END;
-            $$ LANGUAGE plpgsql IMMUTABLE STRICT;
-
-            -- Insert test data
-            INSERT INTO append_only_log (data, leaf_hash)
-            SELECT 
-                'test_data_' || i::text as data,
-                sha256('test_data_' || i::text) as leaf_hash
-            FROM generate_series(1, 5) i;
-        "#).await?;
-        println!("✅ Test data added (5 rows).");
-    }
+    // No test data is added by default now
 
     Ok(())
 }

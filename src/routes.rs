@@ -28,33 +28,29 @@ pub struct ConsistencyQuery {
 // Fetches all entries from the database to rebuild the merkle tree
 pub async fn fetch_all_entries(
     client: &tokio_postgres::Client,
-) -> Result<(Vec<LeafHash>, Vec<(String, usize)>, i32), tokio_postgres::Error> {
+) -> Result<(Vec<LeafHash>, Vec<(String, usize)>), tokio_postgres::Error> {
     println!("🔄 Fetching all entries from database...");
     
-    // Query all rows ordered by id to ensure consistent order
+    // Query all rows from processed_log which guarantees sequential order
     let rows = client
-        .query("SELECT id, data, leaf_hash FROM append_only_log ORDER BY id", &[])
+        .query("SELECT data, leaf_hash FROM processed_log ORDER BY id", &[])
         .await?;
     
     // Create vectors for both the hashes and the index mappings
     let mut leaf_hashes = Vec::new();
     let mut index_mappings = Vec::new();
-    let mut max_id = 0;
     
     // Collect all entries and mappings
     for (idx, row) in rows.into_iter().enumerate() {
-        let id = row.get::<_, i32>("id");
         let data = row.get::<_, String>("data");
         let hash = row.get::<_, Vec<u8>>("leaf_hash");
         
-        max_id = max_id.max(id);
         leaf_hashes.push(LeafHash { hash });
         index_mappings.push((data, idx));
     }
     
     println!("✅ Fetched {} entries from database", leaf_hashes.len());
-    println!("📊 Maximum ID found: {}", max_id);
-    Ok((leaf_hashes, index_mappings, max_id))
+    Ok((leaf_hashes, index_mappings))
 }
 
 // Handler for the /root endpoint

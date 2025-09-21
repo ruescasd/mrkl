@@ -1,7 +1,6 @@
 
 use anyhow::Result;
-use tokio_postgres::{NoTls, AsyncMessage};
-use futures_util::{StreamExt, TryStreamExt};
+use tokio_postgres::NoTls;
 use std::sync::Arc;
 use axum::{
     routing::get,
@@ -21,7 +20,7 @@ async fn main() -> Result<()> {
     println!("Connecting to database...");
     
     // Connect to the database and split into client and raw connection
-    let (client, mut connection) = tokio_postgres::connect(
+    let (client, connection) = tokio_postgres::connect(
         &std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"),
         NoTls,
     ).await?;
@@ -29,126 +28,102 @@ async fn main() -> Result<()> {
     // Wrap the client in an Arc so it can be shared between tasks
     let client = Arc::new(client);
     
+    // Spawn a task to drive the connection
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
     // Initialize shared state with empty merkle tree and maps
     let app_state = AppState {
         merkle_tree: Arc::new(parking_lot::RwLock::new(MemoryBackedTree::new())),
         index_map: IndexMap::new(),
         root_map: RootMap::new(),
         client: client.clone(),
-        next_id: Arc::new(parking_lot::RwLock::new(1)), // Will be updated by rebuild_tree
     };
-
-    // Create channel for communication between tasks
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Clone the state for the processing task
     let process_state = app_state.clone();
 
-    // Spawn task to process notifications
-    tokio::spawn(async move {
-        // Buffer for out-of-order messages
-        let mut pending_messages = std::collections::BTreeMap::new();
+    // Spawn the batch processing task
+    let processor = tokio::spawn(async move {
+        let batch_size = 10000;
+        let interval = std::time::Duration::from_secs(1);
 
-        async move {
-            while let Some(payload) = rx.recv().await {
-                // Parse the JSON payload
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload) {
-                    if let (Some(id), Some(data), Some(hash_b64)) = (
-                        json.get("id").and_then(|v| v.as_i64()),
-                        json.get("data").and_then(|v| v.as_str()),
-                        json.get("hash").and_then(|v| v.as_str())
-                    ) {
-                        let id = id as i32;
-                        let current_next_id = *process_state.next_id.read();
-                        if id < current_next_id {
-                            println!("⚠️ Ignoring already processed message id: {}", id);
-                            continue;
+        loop {
+            // Time the batch processing (movement from append_only_log to processed_log)
+            let batch_start = std::time::Instant::now();
+            
+            let batch_result = process_state.client.query_one(
+                "SELECT * FROM process_next_batch($1)", 
+                &[&batch_size]
+            ).await;
+            
+            let batch_duration = batch_start.elapsed();
+            
+            match batch_result {
+                Ok(row) => {
+                    let rows_processed: i64 = row.get("rows_processed");
+                    if rows_processed > 0 {
+                        let first_id: i64 = row.get("first_id");
+                        let last_id: i64 = row.get("last_id");
+                        
+                        // Time the retrieval from processed_log
+                        let fetch_start = std::time::Instant::now();
+                        
+                        let fetch_result = process_state.client.query(
+                            "SELECT data, leaf_hash 
+                             FROM processed_log 
+                             WHERE id BETWEEN $1 AND $2 
+                             ORDER BY id",
+                            &[&first_id, &last_id]
+                        ).await;
+                        
+                        let fetch_duration = fetch_start.elapsed();
+                        
+                        match fetch_result {
+                            Ok(rows) => {
+                                // Start timing the tree construction
+                                let tree_start = std::time::Instant::now();
+                                
+                                // Update the merkle tree and maps
+                                let mut tree = process_state.merkle_tree.write();
+                                for row in rows {
+                                    let data: String = row.get("data");
+                                    let hash: Vec<u8> = row.get("leaf_hash");
+                                    let leaf_hash = LeafHash::new(hash);
+                                    let idx = tree.len();
+                                    tree.push(leaf_hash);
+                                    process_state.index_map.insert(data, idx as usize);
+                                    let current_root = tree.root();
+                                    process_state.root_map.insert(current_root.as_bytes().to_vec(), tree.len() as usize);
+                                }
+                                
+                                let tree_duration = tree_start.elapsed();
+                                
+                                // Log timing information
+                                println!("Batch stats:");
+                                println!("  Rows processed: {}", rows_processed);
+                                println!("  Batch processing time: {:?}", batch_duration);
+                                println!("  Fetch from processed_log time: {:?}", fetch_duration);
+                                println!("  Tree construction time: {:?}", tree_duration);
+                            }
+                            Err(e) => println!("⚠️ Error fetching processed rows: {}", e),
                         }
-
-                        if id > current_next_id {
-                            // Store for later processing
-                            println!("📥 Buffering out-of-order message id: {} (expecting {})", id, current_next_id);
-                            pending_messages.insert(id, (data.to_string(), hash_b64.to_string()));
-                            continue;
-                        }
-
-                        // Process the current message
-                        process_message(&process_state, data, hash_b64);
-                        *process_state.next_id.write() = id + 1;
-
-                        // Process any buffered messages that are now in order
-                        let mut next_expected_id = id + 1;
-                        while let Some((data, hash_b64)) = pending_messages.remove(&next_expected_id) {
-                            process_message(&process_state, &data, &hash_b64);
-                            *process_state.next_id.write() = next_expected_id + 1;
-                            next_expected_id += 1;
-                        }
-                    } else {
-                        println!("⚠️ Missing id, data, or hash in notification payload");
                     }
-                } else {
-                    println!("⚠️ Failed to parse notification payload as JSON");
+                }
+                Err(e) => {
+                    if !e.to_string().contains("Another processing batch is running") {
+                        println!("⚠️ Error processing batch: {}", e);
+                    }
                 }
             }
-            Ok::<_, anyhow::Error>(())
-        }
-        .await
-        .unwrap_or_else(|e| eprintln!("Error processing notification: {}", e));
-    });
-
-    // Helper function to process a message
-    fn process_message(state: &AppState, data: &str, hash_b64: &str) {
-        use base64::{Engine, engine::general_purpose::STANDARD};
-        if let Ok(hash) = STANDARD.decode(hash_b64) {
-            let leaf_hash = LeafHash::new(hash);
             
-            // Update the merkle tree, index map, and root map
-            let mut tree = state.merkle_tree.write();
-            let idx = tree.len();
-            tree.push(leaf_hash);
-            state.index_map.insert(data.to_string(), idx as usize);
-            let current_root = tree.root();
-            state.root_map.insert(current_root.as_bytes().to_vec(), tree.len() as usize);
-            
-            println!("📄 New entry added:");
-            println!("   Data: {}", data);
-            println!("   Current merkle root: {:?}", current_root.as_bytes());
-            println!("   Tree size: {}", tree.len());
-            println!("---");
-        } else {
-            println!("⚠️ Failed to decode hash from base64");
+            // Wait for next interval
+            tokio::time::sleep(interval).await;
         }
-    }
-
-    // Create a stream of messages from the connection
-    let mut messages = futures_util::stream::poll_fn(move |cx| connection.poll_message(cx))
-        .map_err(|e| anyhow::anyhow!("Error polling messages: {}", e))
-        .boxed();
-
-    // Spawn the notification listener task
-    let notification_handler = tokio::spawn(async move {
-        // Process notifications as they arrive
-        while let Some(message) = messages.try_next().await? {
-            if let AsyncMessage::Notification(notification) = message {
-                println!("🔔 Received notification on channel '{}'", notification.channel());
-                println!("📝 Raw payload received: '{}'", notification.payload());
-                // Parse the payload to validate JSON structure
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(notification.payload()) {
-                    println!("✅ Valid JSON received: {}", serde_json::to_string_pretty(&json).unwrap());
-                } else {
-                    println!("⚠️ Invalid JSON in notification payload");
-                }
-                tx.send(notification.payload().to_string()).unwrap();
-            }
-        }
-        Ok::<_, anyhow::Error>(())
     });
-
-    println!("Setting up notification listener...");
-
-    // Start listening for notifications
-    client.batch_execute("LISTEN new_row_channel").await?;
-    println!("🎧 Listening for new rows on channel 'new_row_channel'...");
 
     // Do initial rebuild of the tree now that connection is established
     println!("Performing initial tree rebuild...");
@@ -173,16 +148,15 @@ async fn main() -> Result<()> {
         app
     );
 
-    // Wait for Ctrl+C, notification handler, or server to finish
+    // Wait for Ctrl+C, processor, or server to finish
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             println!("Received Ctrl+C, shutting down...");
         }
-        result = notification_handler => {
+        result = processor => {
             match result {
-                Ok(Ok(_)) => println!("Notification handler completed successfully"),
-                Ok(Err(e)) => println!("Notification handler error: {}", e),
-                Err(e) => println!("Task join error: {}", e),
+                Ok(_) => println!("Processor completed successfully"),
+                Err(e) => println!("Processor error: {}", e),
             }
         }
         _ = server => {

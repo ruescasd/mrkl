@@ -12,6 +12,13 @@ pub struct Client {
 }
 
 impl Client {
+    /// Wait for a reasonable time to allow entries to be processed
+    pub async fn wait_for_processing(&self) -> Result<()> {
+        // Give enough time for the service to process entries
+        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+        Ok(())
+    }
+
     /// Creates a new test client that interacts with both the HTTP API and database
     pub async fn new(api_base_url: &str) -> Result<Self> {
         // Set up HTTP client with reasonable timeouts

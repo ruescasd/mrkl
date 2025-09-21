@@ -27,7 +27,7 @@ pub use routes::{ProofQuery, ConsistencyQuery};
 
 // Export AppState for use by handlers
 use ct_merkle::mem_backed_tree::MemoryBackedTree;
-/// Shared state between HTTP server and notification processor
+/// Shared state between HTTP server and periodic processor
 #[derive(Clone)]
 pub struct AppState {
     /// The memory-backed merkle tree storing just the leaf hashes
@@ -38,8 +38,6 @@ pub struct AppState {
     pub root_map: RootMap,
     /// Database client for operations that need it
     pub client: Arc<tokio_postgres::Client>,
-    /// Next expected ID for notification processing, protected by RwLock for shared access
-    pub next_id: Arc<parking_lot::RwLock<i32>>,
 }
 
 /// A wrapper around a merkle consistency proof that proves one tree is a prefix of another
@@ -305,7 +303,7 @@ pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>)> 
     
     // Measure database fetch time
     let fetch_start = std::time::Instant::now();
-    let (leaf_hashes, index_mappings, max_id) = routes::fetch_all_entries(&state.client).await?;
+    let (leaf_hashes, index_mappings) = routes::fetch_all_entries(&state.client).await?;
     let fetch_time = fetch_start.elapsed();
     println!("📥 Database fetch completed in {}ms", fetch_time.as_millis());
     
@@ -341,10 +339,6 @@ pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>)> 
     let total_time = fetch_time + compute_time;
     println!("🧮 Tree computation completed in {}ms", compute_time.as_millis());
     println!("✅ Total rebuild time: {}ms for {} entries", total_time.as_millis(), size);
-    
-    // Update the next_id tracker
-    *state.next_id.write() = max_id + 1;
-    println!("📈 Next expected ID set to {}", max_id + 1);
     
     Ok((size, root))
 }
