@@ -38,6 +38,8 @@ pub struct AppState {
     pub root_map: RootMap,
     /// Database client for operations that need it
     pub client: Arc<tokio_postgres::Client>,
+    /// Next expected ID for notification processing, protected by RwLock for shared access
+    pub next_id: Arc<parking_lot::RwLock<i32>>,
 }
 
 /// A wrapper around a merkle consistency proof that proves one tree is a prefix of another
@@ -294,4 +296,55 @@ impl RootMap {
     pub fn clear(&self) {
         self.map.write().clear();
     }
+}
+
+/// Rebuilds the merkle tree and associated maps from scratch using database entries.
+/// Returns the number of entries, final root hash on success.
+pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>)> {
+    println!("🔄 Starting tree rebuild...");
+    
+    // Measure database fetch time
+    let fetch_start = std::time::Instant::now();
+    let (leaf_hashes, index_mappings, max_id) = routes::fetch_all_entries(&state.client).await?;
+    let fetch_time = fetch_start.elapsed();
+    println!("📥 Database fetch completed in {}ms", fetch_time.as_millis());
+    
+    // Measure computation time
+    let compute_start = std::time::Instant::now();
+    
+    // Clear all data structures
+    state.index_map.clear();
+    state.root_map.clear();
+
+    // Now rebuild the tree with the fetched entries
+    let mut tree = state.merkle_tree.write();
+    *tree = ct_merkle::mem_backed_tree::MemoryBackedTree::new();
+    
+    // Add leaf hashes to the tree
+    for leaf_hash in leaf_hashes {
+        tree.push(leaf_hash);
+        // Record root hash after each insertion
+        let current_root = tree.root();
+        state.root_map.insert(current_root.as_bytes().to_vec(), tree.len() as usize);
+    }
+    
+    // Update index mappings
+    for (data, idx) in index_mappings {
+        state.index_map.insert(data, idx);
+    }
+    
+    // Get final state
+    let size = tree.len() as usize;
+    let root = tree.root().as_bytes().to_vec();
+    
+    let compute_time = compute_start.elapsed();
+    let total_time = fetch_time + compute_time;
+    println!("🧮 Tree computation completed in {}ms", compute_time.as_millis());
+    println!("✅ Total rebuild time: {}ms for {} entries", total_time.as_millis(), size);
+    
+    // Update the next_id tracker
+    *state.next_id.write() = max_id + 1;
+    println!("📈 Next expected ID set to {}", max_id + 1);
+    
+    Ok((size, root))
 }

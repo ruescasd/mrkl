@@ -28,7 +28,7 @@ pub struct ConsistencyQuery {
 // Fetches all entries from the database to rebuild the merkle tree
 pub async fn fetch_all_entries(
     client: &tokio_postgres::Client,
-) -> Result<(Vec<LeafHash>, Vec<(String, usize)>), tokio_postgres::Error> {
+) -> Result<(Vec<LeafHash>, Vec<(String, usize)>, i32), tokio_postgres::Error> {
     println!("🔄 Fetching all entries from database...");
     
     // Query all rows ordered by id to ensure consistent order
@@ -39,18 +39,22 @@ pub async fn fetch_all_entries(
     // Create vectors for both the hashes and the index mappings
     let mut leaf_hashes = Vec::new();
     let mut index_mappings = Vec::new();
+    let mut max_id = 0;
     
     // Collect all entries and mappings
     for (idx, row) in rows.into_iter().enumerate() {
+        let id = row.get::<_, i32>("id");
         let data = row.get::<_, String>("data");
         let hash = row.get::<_, Vec<u8>>("leaf_hash");
         
+        max_id = max_id.max(id);
         leaf_hashes.push(LeafHash { hash });
         index_mappings.push((data, idx));
     }
     
     println!("✅ Fetched {} entries from database", leaf_hashes.len());
-    Ok((leaf_hashes, index_mappings))
+    println!("📊 Maximum ID found: {}", max_id);
+    Ok((leaf_hashes, index_mappings, max_id))
 }
 
 // Handler for the /root endpoint
@@ -119,44 +123,12 @@ pub async fn get_inclusion_proof(
 pub async fn trigger_rebuild(
     State(state): State<crate::AppState>,
 ) -> JsonResponse {
-    // First fetch all entries without holding the lock
-    match fetch_all_entries(&state.client).await {
-        Ok((leaf_hashes, index_mappings)) => {
-            // Clear all data structures
-            state.index_map.clear();
-            state.root_map.clear();
-
-            // Now rebuild the tree with the fetched entries
-            let mut tree = state.merkle_tree.write();
-            
-            // Clear and rebuild tree, index map, and root map
-            *tree = ct_merkle::mem_backed_tree::MemoryBackedTree::new();
-            for (_idx, leaf_hash) in leaf_hashes.into_iter().enumerate() {
-                tree.push(leaf_hash);
-                // Record root hash after each insertion
-                let current_root = tree.root();
-                state.root_map.insert(current_root.as_bytes().to_vec(), tree.len() as usize);
-            }
-            
-            // Update index mappings
-            for (data, idx) in index_mappings {
-                state.index_map.insert(data, idx);
-            }
-            
-            // Get final state
-            let size = tree.len();
-            let root = tree.root();
-            let root_bytes = root.as_bytes().to_vec();
-            
-            // Drop the write guard before creating response
-            drop(tree);
-            
-            Json(json!({
-                "status": "ok",
-                "tree_size": size,
-                "merkle_root": format!("{:?}", root_bytes)
-            }))
-        },
+    match crate::rebuild_tree(&state).await {
+        Ok((size, root)) => Json(json!({
+            "status": "ok",
+            "tree_size": size,
+            "merkle_root": format!("{:?}", root),
+        })),
         Err(e) => Json(json!({
             "status": "error",
             "error": e.to_string()

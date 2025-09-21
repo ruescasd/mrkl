@@ -35,53 +35,90 @@ async fn main() -> Result<()> {
         index_map: IndexMap::new(),
         root_map: RootMap::new(),
         client: client.clone(),
+        next_id: Arc::new(parking_lot::RwLock::new(1)), // Will be updated by rebuild_tree
     };
 
     // Create channel for communication between tasks
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
-    // Clone the client and state for the processing task
-    let process_client = client.clone();
+    // Clone the state for the processing task
     let process_state = app_state.clone();
 
-    // Spawn task to process received IDs
+    // Spawn task to process notifications
     tokio::spawn(async move {
+        // Buffer for out-of-order messages
+        let mut pending_messages = std::collections::BTreeMap::new();
+
         async move {
-            while let Some(id) = rx.recv().await {
-                println!("Received notification with ID: {}", id);
-                // Fetch the actual row data
-                if let Some(row) = process_client
-                    .query_opt(
-                        "SELECT id, data, leaf_hash FROM append_only_log WHERE id = $1",
-                        &[&id],
-                    )
-                    .await?
-                {
-                    let data = row.get::<_, String>("data");
-                    let hash = row.get::<_, Vec<u8>>("leaf_hash");
-                    let leaf_hash = LeafHash::new(hash);
-                    
-                    // Update the merkle tree, index map, and root map
-                    let mut tree = process_state.merkle_tree.write();
-                    let idx = tree.len();
-                    tree.push(leaf_hash);
-                    process_state.index_map.insert(data.clone(), idx as usize);
-                    let current_root = tree.root();
-                    process_state.root_map.insert(current_root.as_bytes().to_vec(), tree.len() as usize);
-                    
-                    println!("📄 New row details:");
-                    println!("   ID: {}", row.get::<_, i32>("id"));
-                    println!("   Data: {}", data);
-                    println!("   Current merkle root: {:?}", current_root.as_bytes());
-                    println!("   Tree size: {}", tree.len());
-                    println!("---");
+            while let Some(payload) = rx.recv().await {
+                // Parse the JSON payload
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload) {
+                    if let (Some(id), Some(data), Some(hash_b64)) = (
+                        json.get("id").and_then(|v| v.as_i64()),
+                        json.get("data").and_then(|v| v.as_str()),
+                        json.get("hash").and_then(|v| v.as_str())
+                    ) {
+                        let id = id as i32;
+                        let current_next_id = *process_state.next_id.read();
+                        if id < current_next_id {
+                            println!("⚠️ Ignoring already processed message id: {}", id);
+                            continue;
+                        }
+
+                        if id > current_next_id {
+                            // Store for later processing
+                            println!("📥 Buffering out-of-order message id: {} (expecting {})", id, current_next_id);
+                            pending_messages.insert(id, (data.to_string(), hash_b64.to_string()));
+                            continue;
+                        }
+
+                        // Process the current message
+                        process_message(&process_state, data, hash_b64);
+                        *process_state.next_id.write() = id + 1;
+
+                        // Process any buffered messages that are now in order
+                        let mut next_expected_id = id + 1;
+                        while let Some((data, hash_b64)) = pending_messages.remove(&next_expected_id) {
+                            process_message(&process_state, &data, &hash_b64);
+                            *process_state.next_id.write() = next_expected_id + 1;
+                            next_expected_id += 1;
+                        }
+                    } else {
+                        println!("⚠️ Missing id, data, or hash in notification payload");
+                    }
+                } else {
+                    println!("⚠️ Failed to parse notification payload as JSON");
                 }
             }
-            Ok::<_, tokio_postgres::Error>(())
+            Ok::<_, anyhow::Error>(())
         }
         .await
         .unwrap_or_else(|e| eprintln!("Error processing notification: {}", e));
     });
+
+    // Helper function to process a message
+    fn process_message(state: &AppState, data: &str, hash_b64: &str) {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        if let Ok(hash) = STANDARD.decode(hash_b64) {
+            let leaf_hash = LeafHash::new(hash);
+            
+            // Update the merkle tree, index map, and root map
+            let mut tree = state.merkle_tree.write();
+            let idx = tree.len();
+            tree.push(leaf_hash);
+            state.index_map.insert(data.to_string(), idx as usize);
+            let current_root = tree.root();
+            state.root_map.insert(current_root.as_bytes().to_vec(), tree.len() as usize);
+            
+            println!("📄 New entry added:");
+            println!("   Data: {}", data);
+            println!("   Current merkle root: {:?}", current_root.as_bytes());
+            println!("   Tree size: {}", tree.len());
+            println!("---");
+        } else {
+            println!("⚠️ Failed to decode hash from base64");
+        }
+    }
 
     // Create a stream of messages from the connection
     let mut messages = futures_util::stream::poll_fn(move |cx| connection.poll_message(cx))
@@ -94,9 +131,14 @@ async fn main() -> Result<()> {
         while let Some(message) = messages.try_next().await? {
             if let AsyncMessage::Notification(notification) = message {
                 println!("🔔 Received notification on channel '{}'", notification.channel());
-                println!("📝 Payload: {}", notification.payload());
-                let row_id: i32 = notification.payload().parse()?;
-                tx.send(row_id).unwrap();
+                println!("📝 Raw payload received: '{}'", notification.payload());
+                // Parse the payload to validate JSON structure
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(notification.payload()) {
+                    println!("✅ Valid JSON received: {}", serde_json::to_string_pretty(&json).unwrap());
+                } else {
+                    println!("⚠️ Invalid JSON in notification payload");
+                }
+                tx.send(notification.payload().to_string()).unwrap();
             }
         }
         Ok::<_, anyhow::Error>(())
@@ -110,31 +152,9 @@ async fn main() -> Result<()> {
 
     // Do initial rebuild of the tree now that connection is established
     println!("Performing initial tree rebuild...");
-    if let Ok((leaf_hashes, index_mappings)) = mrkl::fetch_all_entries(&app_state.client).await {
-        // Clear all data structures
-        app_state.index_map.clear();
-        app_state.root_map.clear();
-
-        // Rebuild the tree with the fetched entries
-        let mut tree = app_state.merkle_tree.write();
-        *tree = MemoryBackedTree::new();
-        
-        // Add leaf hashes to the tree
-        for leaf_hash in leaf_hashes {
-            tree.push(leaf_hash);
-            // Record root hash after each insertion
-            let current_root = tree.root();
-            app_state.root_map.insert(current_root.as_bytes().to_vec(), tree.len() as usize);
-        }
-        
-        // Update index mappings
-        for (data, idx) in index_mappings {
-            app_state.index_map.insert(data, idx);
-        }
-        
-        println!("✅ Initial rebuild complete with {} entries", tree.len());
-    } else {
-        println!("⚠️ Failed to perform initial rebuild");
+    match mrkl::rebuild_tree(&app_state).await {
+        Ok((size, _)) => println!("✅ Initial rebuild complete with {} entries", size),
+        Err(e) => println!("⚠️ Failed to perform initial rebuild: {}", e)
     }
 
     // Build our application with routes
