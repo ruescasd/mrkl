@@ -1,0 +1,27 @@
+[package]
+name = "mrkl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = { version = "0.7.10", features = ["with-chrono-0_4"] }
+sha2 = "0.10.8"
+dotenv = "0.15.0"
+anyhow = "1.0.82" # For simple error handling in our binaries
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+axum = { version = "0.7", features = ["json"] }
+tower = "0.4"
+serde_json = "1.0"
+parking_lot = "0.12"
+ct-merkle = "0.2.0"
+
+# Define our two separate binaries
+[[bin]]
+name = "populator"
+path = "src/bin/populator.rs"
+
+[[bin]]
+name = "listener"
+path = "src/bin/listener.rs"

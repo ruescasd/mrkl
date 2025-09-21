@@ -1,0 +1,56 @@
+use anyhow::Result;
+use tokio_postgres::{NoTls, AsyncMessage};
+use futures_util::StreamExt;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    dotenv::dotenv().ok();
+
+    println!("Connecting to database...");
+    
+    // Connect to the database
+    let (client, connection) = tokio_postgres::connect(
+        &std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"),
+        NoTls,
+    ).await?;
+
+    // Wrap the client in an Arc to share it between tasks
+    let client = Arc::new(client);
+    let client_clone = client.clone();
+
+    println!("Connected! Starting connection handler...");
+
+    // Spawn a task to handle the connection
+    let connection_handler = tokio::spawn(async move {
+        println!("Connection handler started");
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    println!("Setting up notification listener...");
+
+    // Start listening for notifications
+    client.batch_execute("LISTEN new_row_channel").await?;
+    println!("🎧 Listening for new rows on channel 'new_row_channel'...");
+
+    // Set up a simple polling loop for notifications
+    loop {
+        // Query for notifications periodically
+        let rows = client_clone
+            .query_opt("SELECT 1", &[])
+            .await?;
+
+        if rows.is_some() {
+            println!("Database connection is alive...");
+        }
+
+        // Small delay between polls
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+
+    #[allow(unreachable_code)]
+    Ok(())
+}
