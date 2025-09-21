@@ -15,9 +15,11 @@ use ct_merkle::{
     HashableLeaf, InclusionProof,
 };
 use sha2::Sha256;
+use sha2::Digest;
 use axum::extract::Query;
 use serde::Deserialize;
-use base64;
+use mrkl::{LeafHash, IndexMap, MerkleProof};
+
 
 #[derive(Debug, Deserialize)]
 struct ProofQuery {
@@ -30,22 +32,29 @@ type JsonResponse = Json<serde_json::Value>;
 // Fetches all entries from the database to rebuild the merkle tree
 async fn fetch_all_entries(
     client: &tokio_postgres::Client,
-) -> Result<Vec<String>, tokio_postgres::Error> {
+) -> Result<(Vec<LeafHash>, Vec<(String, usize)>), tokio_postgres::Error> {
     println!("🔄 Fetching all entries from database...");
     
     // Query all rows ordered by id to ensure consistent order
     let rows = client
-        .query("SELECT id, data FROM append_only_log ORDER BY id", &[])
+        .query("SELECT id, data, leaf_hash FROM append_only_log ORDER BY id", &[])
         .await?;
     
-    // Collect all entries
-    let entries: Vec<String> = rows
-        .into_iter()
-        .map(|row| row.get::<_, String>("data"))
-        .collect();
+    // Create vectors for both the hashes and the index mappings
+    let mut leaf_hashes = Vec::new();
+    let mut index_mappings = Vec::new();
     
-    println!("✅ Fetched {} entries from database", entries.len());
-    Ok(entries)
+    // Collect all entries and mappings
+    for (idx, row) in rows.into_iter().enumerate() {
+        let data = row.get::<_, String>("data");
+        let hash = row.get::<_, Vec<u8>>("leaf_hash");
+        
+        leaf_hashes.push(LeafHash { hash });
+        index_mappings.push((data, idx));
+    }
+    
+    println!("✅ Fetched {} entries from database", leaf_hashes.len());
+    Ok((leaf_hashes, index_mappings))
 }
 
 // Handler for the /root endpoint
@@ -68,39 +77,32 @@ async fn get_inclusion_proof(
 ) -> JsonResponse {
     let tree = state.merkle_tree.read();
     
-    // Get all items and find our target
-    let tree_size = tree.len();
-    let mut found_idx = None;
+    // Look up the index in our O(1) index map
+    let found_idx = state.index_map.get(&query.data);
     
-    // Linear search through the tree items
-    for i in 0..tree_size {
-        if tree.get(i as usize) == Some(&query.data) {
-            found_idx = Some(i);
-            break;
-        }
-    }
+    // First compute the hash of our query data
+    let query_hash = LeafHash::from_data(&query.data);
     
     match found_idx {
         Some(idx) => {
             // Generate the proof
-            let proof = tree.prove_inclusion(idx as usize);
+            let proof = tree.prove_inclusion(idx);
             let root = tree.root();
             
             // Verify the proof immediately as a sanity check
-            match root.verify_inclusion(&query.data, idx as u64, &proof) {
+            match root.verify_inclusion(&query_hash, idx as u64, &proof) {
                 Ok(()) => {
-                    // Convert proof to bytes for transmission
-                    let proof_bytes: Vec<u8> = proof
-                        .as_bytes()
-                        .iter()
-                        .copied()
-                        .collect();
+                    // Create a MerkleProof with all necessary data
+                    let merkle_proof = MerkleProof {
+                        index: idx,
+                        proof_bytes: proof.as_bytes().iter().copied().collect(),
+                        root: root.as_bytes().to_vec(),
+                        tree_size: tree.len() as usize,
+                    };
                     
                     Json(json!({
                         "status": "ok",
-                        "index": idx,
-                        "proof": base64::encode(proof_bytes),
-                        "root": format!("{:?}", root.as_bytes())
+                        "proof": merkle_proof
                     }))
                 },
                 Err(e) => Json(json!({
@@ -124,14 +126,22 @@ async fn trigger_rebuild(
 ) -> JsonResponse {
     // First fetch all entries without holding the lock
     match fetch_all_entries(&state.client).await {
-        Ok(entries) => {
+        Ok((leaf_hashes, index_mappings)) => {
+            // First clear both data structures
+            state.index_map.clear();
+
             // Now rebuild the tree with the fetched entries
             let mut tree = state.merkle_tree.write();
             
-            // Clear and rebuild
+            // Clear and rebuild tree and index map
             *tree = MemoryBackedTree::new();
-            for entry in entries {
-                tree.push(entry);
+            for (idx, leaf_hash) in leaf_hashes.into_iter().enumerate() {
+                tree.push(leaf_hash);
+            }
+            
+            // Update index mappings
+            for (data, idx) in index_mappings {
+                state.index_map.insert(data, idx);
             }
             
             // Get final state
@@ -158,8 +168,10 @@ async fn trigger_rebuild(
 // Shared state between HTTP server and notification processor
 #[derive(Clone)]
 struct AppState {
-    // The memory-backed merkle tree storing our log entries
-    merkle_tree: Arc<parking_lot::RwLock<MemoryBackedTree<Sha256, String>>>,
+    // The memory-backed merkle tree storing just the leaf hashes
+    merkle_tree: Arc<parking_lot::RwLock<MemoryBackedTree<Sha256, LeafHash>>>,
+    // Mapping from data strings to their indices in the tree
+    index_map: IndexMap,
     // Database client for operations that need it
     client: Arc<tokio_postgres::Client>,
 }
@@ -179,9 +191,10 @@ async fn main() -> Result<()> {
     // Wrap the client in an Arc so it can be shared between tasks
     let client = Arc::new(client);
     
-    // Initialize shared state with empty merkle tree
+    // Initialize shared state with empty merkle tree and index map
     let app_state = AppState {
         merkle_tree: Arc::new(parking_lot::RwLock::new(MemoryBackedTree::new())),
+        index_map: IndexMap::new(),
         client: client.clone(),
     };
 
@@ -200,16 +213,20 @@ async fn main() -> Result<()> {
                 // Fetch the actual row data
                 if let Some(row) = process_client
                     .query_opt(
-                        "SELECT id, data FROM append_only_log WHERE id = $1",
+                        "SELECT id, data, leaf_hash FROM append_only_log WHERE id = $1",
                         &[&id],
                     )
                     .await?
                 {
                     let data = row.get::<_, String>("data");
+                    let hash = row.get::<_, Vec<u8>>("leaf_hash");
+                    let leaf_hash = LeafHash::new(hash);
                     
-                    // Update the merkle tree with the new entry
+                    // Update both the merkle tree and index map
                     let mut tree = process_state.merkle_tree.write();
-                    tree.push(data.clone());
+                    let idx = tree.len();
+                    tree.push(leaf_hash);
+                    process_state.index_map.insert(data.clone(), idx as usize);
                     let current_root = tree.root();
                     
                     println!("📄 New row details:");
@@ -253,12 +270,24 @@ async fn main() -> Result<()> {
 
     // Do initial rebuild of the tree now that connection is established
     println!("Performing initial tree rebuild...");
-    if let Ok(entries) = fetch_all_entries(&app_state.client).await {
+    if let Ok((leaf_hashes, index_mappings)) = fetch_all_entries(&app_state.client).await {
+        // Clear both data structures
+        app_state.index_map.clear();
+
+        // Rebuild the tree with the fetched entries
         let mut tree = app_state.merkle_tree.write();
         *tree = MemoryBackedTree::new();
-        for entry in entries {
-            tree.push(entry);
+        
+        // Add leaf hashes to the tree
+        for leaf_hash in leaf_hashes {
+            tree.push(leaf_hash);
         }
+        
+        // Update index mappings
+        for (data, idx) in index_mappings {
+            app_state.index_map.insert(data, idx);
+        }
+        
         println!("✅ Initial rebuild complete with {} entries", tree.len());
     } else {
         println!("⚠️ Failed to perform initial rebuild");
