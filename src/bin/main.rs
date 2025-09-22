@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
     // Spawn the batch processing task
     let processor = tokio::spawn(async move {
         let batch_size = 10000;
-        let interval = std::time::Duration::from_secs(1);
+        let interval = std::time::Duration::from_secs(10);
 
         loop {
             // Time the batch processing (movement from append_only_log to processed_log)

@@ -74,6 +74,7 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
         ) LANGUAGE plpgsql AS $$
         DECLARE
             next_id BIGINT;
+            last_processed_source_id BIGINT;
             rows_affected BIGINT;
             batch_first_id BIGINT;
             batch_last_id BIGINT;
@@ -83,20 +84,20 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
                 RAISE EXCEPTION 'Another processing batch is running';
             END IF;
 
-            -- Find the next ID to use
+            -- Find our starting points
             SELECT COALESCE(MAX(id), 0) + 1 INTO next_id FROM processed_log;
+            SELECT COALESCE(MAX(source_id), 0) INTO last_processed_source_id FROM processed_log;
             
             -- Start a CTE for atomic processing
             WITH numbered_rows AS (
-                -- Select unprocessed rows
+                -- Select unprocessed rows (those with id greater than last processed)
                 SELECT 
                     al.id as source_id,
                     al.data,
                     al.leaf_hash,
                     ROW_NUMBER() OVER (ORDER BY al.id) as row_num
                 FROM append_only_log al
-                LEFT JOIN processed_log pl ON pl.source_id = al.id
-                WHERE pl.id IS NULL
+                WHERE al.id > last_processed_source_id
                 -- Ensure deterministic ordering
                 ORDER BY al.id
                 -- Limit batch size

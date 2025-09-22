@@ -137,7 +137,6 @@ async fn test_large_batch_performance() -> Result<()> {
     let num_entries = 10_000; // A significant number of entries for meaningful measurements
     
     println!("🔥 Starting performance test with {} entries...", num_entries);
-    let start = std::time::Instant::now();
     
     // Add entries in chunks to avoid overwhelming the system
     let chunk_size = 1000;
