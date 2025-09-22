@@ -88,11 +88,20 @@ impl Client {
         Ok(root_bytes)
     }
 
-    /// Gets an inclusion proof for a piece of data
+    /// Gets an inclusion proof for a given hash or piece of data
     pub async fn get_proof(&self, data: &str) -> Result<MerkleProof> {
+        // Compute the hash from the data
+        let mut hasher = Sha256::new();
+        hasher.update(data.as_bytes());
+        let hash_result = hasher.finalize();
+        
+        // Base64 encode the hash for transmission
+        let hash_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, hash_result.as_slice());
+
+        // Make the request with the base64 encoded hash
         let response = self.http_client
             .get(&format!("{}/proof", self.api_base_url))
-            .query(&[("data", data)])
+            .query(&[("hash", hash_b64)])
             .send()
             .await?;
             

@@ -12,8 +12,9 @@ use anyhow::Result;
 // Export modules
 pub mod routes;
 pub mod client;
+pub mod merkle_state;
 
-// Re-export route handlers
+// Re-export route handlers and types
 pub use routes::{
     get_merkle_root,
     get_inclusion_proof,
@@ -21,19 +22,18 @@ pub use routes::{
     trigger_rebuild,
     fetch_all_entries,
 };
+pub use merkle_state::MerkleState;
 
 // Re-export types used by handlers
 pub use routes::{ProofQuery, ConsistencyQuery};
 
-// Export AppState for use by handlers
-use ct_merkle::mem_backed_tree::MemoryBackedTree;
 /// Shared state between HTTP server and periodic processor
 #[derive(Clone)]
 pub struct AppState {
-    /// The memory-backed merkle tree storing just the leaf hashes
-    pub merkle_tree: Arc<parking_lot::RwLock<MemoryBackedTree<Sha256, LeafHash>>>,
-    /// Mapping from data strings to their indices in the tree
-    pub index_map: IndexMap,
+    /// The merkle state containing both the tree and its last processed ID
+    pub merkle_state: Arc<parking_lot::RwLock<MerkleState>>,
+    /// Mapping from leaf hashes to their indices in the tree
+    pub index_map: HashIndexMap,
     /// Mapping from root hashes to their tree sizes
     pub root_map: RootMap,
     /// Database client for operations that need it
@@ -110,10 +110,10 @@ pub struct MerkleProof {
     pub tree_size: usize,
 }
 impl MerkleProof {
-    /// Verifies this proof against the given data using ct-merkle's proof verification
-    pub fn verify(&self, data: &str) -> Result<bool> {
-        // Create the leaf hash from the input data
-        let leaf_hash = LeafHash::from_data(data);
+    /// Verifies this proof against the given leaf hash using ct-merkle's proof verification
+    pub fn verify(&self, hash: &[u8]) -> Result<bool> {
+        // Create the leaf hash from the provided hash
+        let leaf_hash = LeafHash::new(hash.to_vec());
         
         // Create a digest from our stored root bytes
         let mut digest = Output::<Sha256>::default();
@@ -212,16 +212,6 @@ impl LeafHash {
         Self { hash }
     }
 
-    /// Creates a LeafHash by computing the SHA-256 hash of data
-    pub fn from_data(data: &str) -> Self {
-        use sha2::{Sha256, Digest};
-        let mut hasher = Sha256::new();
-        Digest::update(&mut hasher, data.as_bytes());
-        Self {
-            hash: hasher.finalize().to_vec()
-        }
-    }
-
     /// Returns the raw hash bytes
     pub fn as_bytes(&self) -> &[u8] {
         &self.hash
@@ -234,14 +224,14 @@ impl HashableLeaf for LeafHash {
     }
 }
 
-/// A thread-safe mapping of data strings to their indices in the merkle tree.
-/// This allows O(1) lookup of proof indices without storing strings in the tree.
+/// A thread-safe mapping of leaf hashes to their indices in the merkle tree.
+/// This allows O(1) lookup of proof indices without storing additional data.
 #[derive(Clone)]
-pub struct IndexMap {
-    map: Arc<RwLock<HashMap<String, usize>>>,
+pub struct HashIndexMap {
+    map: Arc<RwLock<HashMap<Vec<u8>, usize>>>,
 }
 
-impl IndexMap {
+impl HashIndexMap {
     /// Creates a new empty index map.
     pub fn new() -> Self {
         Self {
@@ -249,14 +239,14 @@ impl IndexMap {
         }
     }
 
-    /// Records a mapping between data and its index.
-    pub fn insert(&self, data: String, index: usize) {
-        self.map.write().insert(data, index);
+    /// Records a mapping between a leaf hash and its index.
+    pub fn insert(&self, hash: Vec<u8>, index: usize) {
+        self.map.write().insert(hash, index);
     }
 
-    /// Looks up the index for a piece of data.
-    pub fn get(&self, data: &str) -> Option<usize> {
-        self.map.read().get(data).copied()
+    /// Looks up the index for a leaf hash.
+    pub fn get(&self, hash: &[u8]) -> Option<usize> {
+        self.map.read().get(hash).copied()
     }
 
     /// Clears all mappings.
@@ -297,13 +287,13 @@ impl RootMap {
 }
 
 /// Rebuilds the merkle tree and associated maps from scratch using database entries.
-/// Returns the number of entries, final root hash on success.
-pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>)> {
+/// Returns the number of entries, final root hash, and last processed ID on success.
+pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>, i64)> {
     println!("🔄 Starting tree rebuild...");
     
     // Measure database fetch time
     let fetch_start = std::time::Instant::now();
-    let (leaf_hashes, index_mappings) = routes::fetch_all_entries(&state.client).await?;
+    let (leaf_hashes, index_mappings, last_id) = routes::fetch_all_entries(&state.client).await?;
     let fetch_time = fetch_start.elapsed();
     println!("📥 Database fetch completed in {}ms", fetch_time.as_millis());
     
@@ -314,31 +304,33 @@ pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>)> 
     state.index_map.clear();
     state.root_map.clear();
 
-    // Now rebuild the tree with the fetched entries
-    let mut tree = state.merkle_tree.write();
-    *tree = ct_merkle::mem_backed_tree::MemoryBackedTree::new();
+    // Create new merkle state and build tree
+    let mut merkle_state = MerkleState::new();
     
     // Add leaf hashes to the tree
     for leaf_hash in leaf_hashes {
-        tree.push(leaf_hash);
+        merkle_state.update_with_entry(leaf_hash, last_id);
         // Record root hash after each insertion
-        let current_root = tree.root();
-        state.root_map.insert(current_root.as_bytes().to_vec(), tree.len() as usize);
+        let current_root = merkle_state.tree.root();
+        state.root_map.insert(current_root.as_bytes().to_vec(), merkle_state.tree.len() as usize);
     }
     
-    // Update index mappings
-    for (data, idx) in index_mappings {
-        state.index_map.insert(data, idx);
+    // Update index mappings for the leaf hashes
+    for (leaf_hash, idx) in index_mappings {
+        state.index_map.insert(leaf_hash, idx);
     }
     
     // Get final state
-    let size = tree.len() as usize;
-    let root = tree.root().as_bytes().to_vec();
+    let size = merkle_state.tree.len() as usize;
+    let root = merkle_state.tree.root().as_bytes().to_vec();
     
     let compute_time = compute_start.elapsed();
     let total_time = fetch_time + compute_time;
     println!("🧮 Tree computation completed in {}ms", compute_time.as_millis());
     println!("✅ Total rebuild time: {}ms for {} entries", total_time.as_millis(), size);
     
-    Ok((size, root))
+    // Update the merkle state
+    *state.merkle_state.write() = merkle_state;
+
+    Ok((size, root, last_id))
 }

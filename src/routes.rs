@@ -14,7 +14,8 @@ type JsonResponse = Json<serde_json::Value>;
 
 #[derive(Debug, Deserialize)]
 pub struct ProofQuery {
-    pub data: String,
+    #[serde(with = "crate::proof_bytes_format")]
+    pub hash: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,62 +29,83 @@ pub struct ConsistencyQuery {
 // Fetches all entries from the database to rebuild the merkle tree
 pub async fn fetch_all_entries(
     client: &tokio_postgres::Client,
-) -> Result<(Vec<LeafHash>, Vec<(String, usize)>), tokio_postgres::Error> {
+) -> Result<(Vec<LeafHash>, Vec<(Vec<u8>, usize)>, i64), tokio_postgres::Error> {
     println!("🔄 Fetching all entries from database...");
     
     // Query all rows from processed_log which guarantees sequential order
     let rows = client
-        .query("SELECT data, leaf_hash FROM processed_log ORDER BY id", &[])
+        .query(
+            "SELECT pl.id, pl.leaf_hash 
+             FROM processed_log pl 
+             ORDER BY pl.id", 
+            &[])
         .await?;
     
     // Create vectors for both the hashes and the index mappings
     let mut leaf_hashes = Vec::new();
     let mut index_mappings = Vec::new();
+    let mut last_id = 0;
     
-    // Collect all entries and mappings
+    // Collect all entries and mappings - now based only on leaf_hash
     for (idx, row) in rows.into_iter().enumerate() {
-        let data = row.get::<_, String>("data");
+        let id = row.get::<_, i64>("id");
         let hash = row.get::<_, Vec<u8>>("leaf_hash");
         
-        leaf_hashes.push(LeafHash { hash });
-        index_mappings.push((data, idx));
+        leaf_hashes.push(LeafHash { hash: hash.clone() });
+        index_mappings.push((hash, idx));
+        last_id = id;
     }
     
     println!("✅ Fetched {} entries from database", leaf_hashes.len());
-    Ok((leaf_hashes, index_mappings))
+    Ok((leaf_hashes, index_mappings, last_id))
 }
 
 // Handler for the /root endpoint
 pub async fn get_merkle_root(
     State(state): State<crate::AppState>,
 ) -> JsonResponse {
-    let tree = state.merkle_tree.read();
-    let root = tree.root();
+    let merkle_state = state.merkle_state.read();
+    let root = merkle_state.tree.root();
     Json(json!({
         "merkle_root": format!("{:?}", root.as_bytes()),
-        "tree_size": tree.len(),
+        "tree_size": merkle_state.tree.len(),
+        "last_processed_id": merkle_state.last_processed_id,
         "status": "ok"
     }))
 }
 
 // Handler for the /proof endpoint that generates inclusion proofs
 pub async fn get_inclusion_proof(
-    Query(query): Query<ProofQuery>,
+    query_result: Result<Query<ProofQuery>, axum::extract::rejection::QueryRejection>,
     State(state): State<crate::AppState>,
 ) -> JsonResponse {
-    let tree = state.merkle_tree.read();
+    // Handle query parameter parsing errors
+    let Query(query) = match query_result {
+        Ok(query) => query,
+        Err(e) => {
+            println!("🚫 Invalid proof request: {}", e);
+            return Json(json!({
+                "status": "error",
+                "error": format!(
+                    "Invalid request parameters: {}. The hash parameter must be base64 encoded.", 
+                    e
+                )
+            }));
+        }
+    };
+    let merkle_state = state.merkle_state.read();
     
     // Look up the index in our O(1) index map
-    let found_idx = state.index_map.get(&query.data);
+    let found_idx = state.index_map.get(&query.hash);
     
-    // First compute the hash of our query data
-    let query_hash = LeafHash::from_data(&query.data);
+    // Create LeafHash from provided hash
+    let query_hash = LeafHash { hash: query.hash };
     
     match found_idx {
         Some(idx) => {
             // Generate the proof
-            let proof = tree.prove_inclusion(idx);
-            let root = tree.root();
+            let proof = merkle_state.tree.prove_inclusion(idx);
+            let root = merkle_state.tree.root();
             
             // Verify the proof immediately as a sanity check
             match root.verify_inclusion(&query_hash, idx as u64, &proof) {
@@ -93,7 +115,7 @@ pub async fn get_inclusion_proof(
                         index: idx,
                         proof_bytes: proof.as_bytes().iter().copied().collect(),
                         root: root.as_bytes().to_vec(),
-                        tree_size: tree.len() as usize,
+                        tree_size: merkle_state.tree.len() as usize,
                     };
                     
                     Json(json!({
@@ -109,7 +131,7 @@ pub async fn get_inclusion_proof(
         },
         None => Json(json!({
             "status": "error",
-            "error": "Data not found in the tree"
+            "error": "Hash not found in the tree"
         }))
     }
 }
@@ -120,10 +142,11 @@ pub async fn trigger_rebuild(
     State(state): State<crate::AppState>,
 ) -> JsonResponse {
     match crate::rebuild_tree(&state).await {
-        Ok((size, root)) => Json(json!({
+        Ok((size, root, last_id)) => Json(json!({
             "status": "ok",
             "tree_size": size,
             "merkle_root": format!("{:?}", root),
+            "last_processed_id": last_id,
         })),
         Err(e) => Json(json!({
             "status": "error",
@@ -134,9 +157,23 @@ pub async fn trigger_rebuild(
 
 // Handler for the /consistency endpoint that generates consistency proofs
 pub async fn get_consistency_proof(
-    Query(query): Query<ConsistencyQuery>,
+    query_result: Result<Query<ConsistencyQuery>, axum::extract::rejection::QueryRejection>,
     State(state): State<crate::AppState>,
 ) -> JsonResponse {
+    // Handle query parameter parsing errors
+    let Query(query) = match query_result {
+        Ok(query) => query,
+        Err(e) => {
+            println!("🚫 Invalid consistency proof request: {}", e);
+            return Json(json!({
+                "status": "error",
+                "error": format!(
+                    "Invalid request parameters: {}. The old_root parameter must be base64 encoded.", 
+                    e
+                )
+            }));
+        }
+    };
     // Look up size for historical root
     let old_size = match state.root_map.get_size(&query.old_root) {
         Some(size) => size,
@@ -147,9 +184,9 @@ pub async fn get_consistency_proof(
     };
 
     // Get current tree info
-    let tree = state.merkle_tree.read();
-    let current_size = tree.len() as usize;
-    let current_root = tree.root();
+    let merkle_state = state.merkle_state.read();
+    let current_size = merkle_state.tree.len() as usize;
+    let current_root = merkle_state.tree.root();
 
     // Validate the sizes
     if old_size > current_size {
@@ -183,7 +220,7 @@ pub async fn get_consistency_proof(
     let old_root = RootHash::<Sha256>::new(old_digest, old_size as u64);
     
     // Generate consistency proof using current tree state
-    let proof = tree.prove_consistency(num_additions);
+    let proof = merkle_state.tree.prove_consistency(num_additions);
     
     if let Err(e) = current_root.verify_consistency(&old_root, &proof) {
         println!("Consistency proof verification failed: {}", e);

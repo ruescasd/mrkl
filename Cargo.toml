@@ -31,7 +31,3 @@ path = "src/bin/setup.rs"
 [[bin]]
 name = "main"
 path = "src/bin/main.rs"
-
-[[bin]]
-name = "tester"
-path = "src/bin/tester.rs"

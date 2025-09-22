@@ -48,18 +48,20 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
     "#).await?;
     println!("✅ Table 'append_only_log' is ready.");
 
-    // 2. Create the processed log table with strict controls
+    // 2. Create the processed log table with strict controls - Now without data column
     client.batch_execute(r#"
         CREATE TABLE IF NOT EXISTS processed_log (
             id BIGINT PRIMARY KEY,
             source_id BIGINT NOT NULL,
-            data TEXT NOT NULL,
             leaf_hash BYTEA NOT NULL,
             processed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT processed_log_immutable CHECK (processed_at = processed_at)
         );
         
-        CREATE UNIQUE INDEX processed_log_data_idx ON processed_log(source_id);
+        -- Index on source_id for lookups and duplicate prevention
+        CREATE UNIQUE INDEX processed_log_source_idx ON processed_log(source_id);
+        -- Index on leaf_hash for proof generation
+        CREATE INDEX processed_log_hash_idx ON processed_log(leaf_hash);
     "#).await?;
     println!("✅ Table 'processed_log' is ready.");
 
@@ -93,7 +95,6 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
                 -- Select unprocessed rows using index scan
                 SELECT 
                     al.id as source_id,
-                    al.data,
                     al.leaf_hash,
                     al.id - last_processed_source_id as row_offset
                 FROM append_only_log al
@@ -102,12 +103,11 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
                 LIMIT batch_size
             ),
             inserted AS (
-                -- Insert rows with sequential IDs based on row_offset
-                INSERT INTO processed_log (id, source_id, data, leaf_hash)
+                -- Insert rows with sequential IDs based on row_offset (no data column)
+                INSERT INTO processed_log (id, source_id, leaf_hash)
                 SELECT 
                     next_id + row_offset - 1,
                     source_id,
-                    data,
                     leaf_hash
                 FROM source_rows
                 -- Return information about the inserted rows
@@ -158,7 +158,6 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
             WITH source_rows AS (
                 SELECT 
                     al.id as source_id,
-                    al.data,
                     al.leaf_hash,
                     al.id - $1 as row_offset
                 FROM append_only_log al

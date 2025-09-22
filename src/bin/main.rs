@@ -5,12 +5,13 @@ use std::sync::Arc;
 use axum::{
     routing::get,
     Router,
+    http::StatusCode,
+    Json,
 };
 use std::net::SocketAddr;
-use ct_merkle::{
-    mem_backed_tree::MemoryBackedTree,
-};
-use mrkl::{LeafHash, IndexMap, RootMap};
+
+use mrkl::MerkleState;
+use mrkl::{LeafHash, HashIndexMap, RootMap};
 use mrkl::AppState;
 
 #[tokio::main]
@@ -35,10 +36,10 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Initialize shared state with empty merkle tree and maps
+    // Initialize shared state with empty merkle state and maps
     let app_state = AppState {
-        merkle_tree: Arc::new(parking_lot::RwLock::new(MemoryBackedTree::new())),
-        index_map: IndexMap::new(),
+        merkle_state: Arc::new(parking_lot::RwLock::new(MerkleState::new())),
+        index_map: HashIndexMap::new(),
         root_map: RootMap::new(),
         client: client.clone(),
     };
@@ -49,11 +50,14 @@ async fn main() -> Result<()> {
     // Spawn the batch processing task
     let processor = tokio::spawn(async move {
         let batch_size = 10000;
-        let interval = std::time::Duration::from_secs(10);
+        let interval = std::time::Duration::from_secs(1);
 
         loop {
             // Time the batch processing (movement from append_only_log to processed_log)
             let batch_start = std::time::Instant::now();
+            
+            // Get the current merkle state and last processed ID
+            let current_last_id = process_state.merkle_state.read().last_processed_id;
             
             let batch_result = process_state.client.query_one(
                 "SELECT * FROM process_next_batch($1)", 
@@ -66,18 +70,18 @@ async fn main() -> Result<()> {
                 Ok(row) => {
                     let rows_processed: i64 = row.get("rows_processed");
                     if rows_processed > 0 {
-                        let first_id: i64 = row.get("first_id");
-                        let last_id: i64 = row.get("last_id");
                         
                         // Time the retrieval from processed_log
                         let fetch_start = std::time::Instant::now();
                         
+                        // Instead of using first_id and last_id from batch result,
+                        // query everything after our last known processed ID
                         let fetch_result = process_state.client.query(
-                            "SELECT data, leaf_hash 
+                            "SELECT id, leaf_hash 
                              FROM processed_log 
-                             WHERE id BETWEEN $1 AND $2 
+                             WHERE id > $1 
                              ORDER BY id",
-                            &[&first_id, &last_id]
+                            &[&current_last_id]
                         ).await;
                         
                         let fetch_duration = fetch_start.elapsed();
@@ -87,17 +91,22 @@ async fn main() -> Result<()> {
                                 // Start timing the tree construction
                                 let tree_start = std::time::Instant::now();
                                 
-                                // Update the merkle tree and maps
-                                let mut tree = process_state.merkle_tree.write();
+                                // Update the merkle state and maps atomically
+                                let mut merkle_state = process_state.merkle_state.write();
+
                                 for row in rows {
-                                    let data: String = row.get("data");
+                                    let id: i64 = row.get("id");
                                     let hash: Vec<u8> = row.get("leaf_hash");
-                                    let leaf_hash = LeafHash::new(hash);
-                                    let idx = tree.len();
-                                    tree.push(leaf_hash);
-                                    process_state.index_map.insert(data, idx as usize);
-                                    let current_root = tree.root();
-                                    process_state.root_map.insert(current_root.as_bytes().to_vec(), tree.len() as usize);
+                                    let leaf_hash = LeafHash::new(hash.clone());
+                                    let idx = merkle_state.tree.len();
+                                    
+                                    // Update tree and ID atomically
+                                    merkle_state.update_with_entry(leaf_hash, id);
+                                    
+                                    // Update auxiliary maps
+                                    process_state.index_map.insert(hash, idx as usize);
+                                    let current_root = merkle_state.tree.root();
+                                    process_state.root_map.insert(current_root.as_bytes().to_vec(), merkle_state.tree.len() as usize);
                                 }
                                 
                                 let tree_duration = tree_start.elapsed();
@@ -128,17 +137,33 @@ async fn main() -> Result<()> {
     // Do initial rebuild of the tree now that connection is established
     println!("Performing initial tree rebuild...");
     match mrkl::rebuild_tree(&app_state).await {
-        Ok((size, _)) => println!("✅ Initial rebuild complete with {} entries", size),
+        Ok((size, _, last_id)) => {
+            println!("✅ Initial rebuild complete with {} entries (last_id: {})", size, last_id);
+            // The last_processed_id is already updated in rebuild_tree
+        }
         Err(e) => println!("⚠️ Failed to perform initial rebuild: {}", e)
     }
 
-    // Build our application with routes
+    // Fallback handler for unmatched routes
+    async fn handle_unmatched() -> (StatusCode, Json<serde_json::Value>) {
+        println!("🚫 Unmatched route accessed");
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "status": "error",
+                "error": "Route not found. Available endpoints: /root, /rebuild, /proof, /consistency"
+            }))
+        )
+    }
+
+    // Build our application with routes and error handling
     let app = Router::new()
         .route("/root", get(mrkl::get_merkle_root))
         .route("/rebuild", get(mrkl::trigger_rebuild))
         .route("/proof", get(mrkl::get_inclusion_proof))
         .route("/consistency", get(mrkl::get_consistency_proof))
-        .with_state(app_state);
+        .with_state(app_state)
+        .fallback(handle_unmatched);
 
     // Run our HTTP server
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
