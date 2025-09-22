@@ -89,29 +89,27 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
             SELECT COALESCE(MAX(source_id), 0) INTO last_processed_source_id FROM processed_log;
             
             -- Start a CTE for atomic processing
-            WITH numbered_rows AS (
-                -- Select unprocessed rows (those with id greater than last processed)
+            WITH source_rows AS (
+                -- Select unprocessed rows using index scan
                 SELECT 
                     al.id as source_id,
                     al.data,
                     al.leaf_hash,
-                    ROW_NUMBER() OVER (ORDER BY al.id) as row_num
+                    al.id - last_processed_source_id as row_offset
                 FROM append_only_log al
                 WHERE al.id > last_processed_source_id
-                -- Ensure deterministic ordering
                 ORDER BY al.id
-                -- Limit batch size
                 LIMIT batch_size
             ),
             inserted AS (
-                -- Insert rows with strictly sequential IDs
+                -- Insert rows with sequential IDs based on row_offset
                 INSERT INTO processed_log (id, source_id, data, leaf_hash)
                 SELECT 
-                    next_id + row_num - 1,
+                    next_id + row_offset - 1,
                     source_id,
                     data,
                     leaf_hash
-                FROM numbered_rows
+                FROM source_rows
                 -- Return information about the inserted rows
                 RETURNING id
             )
@@ -139,7 +137,57 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
     "#).await?;
     println!("✅ View 'processing_status' is ready.");
 
-    // 5. Create validation function
+    // 5. Create analysis version of process_next_batch
+    client.batch_execute(r#"
+        CREATE OR REPLACE FUNCTION analyze_next_batch(
+            batch_size INT DEFAULT 10000
+        ) RETURNS TABLE (
+            plan_json JSON
+        ) LANGUAGE plpgsql AS $$
+        DECLARE
+            next_id BIGINT;
+            last_processed_source_id BIGINT;
+            explain_result JSON;
+        BEGIN
+            -- Get starting points (same as process_next_batch)
+            SELECT COALESCE(MAX(id), 0) + 1 INTO next_id FROM processed_log;
+            SELECT COALESCE(MAX(source_id), 0) INTO last_processed_source_id FROM processed_log;
+            
+            -- Execute EXPLAIN ANALYZE and capture the result
+            EXECUTE 'EXPLAIN (ANALYZE, FORMAT JSON) 
+            WITH source_rows AS (
+                SELECT 
+                    al.id as source_id,
+                    al.data,
+                    al.leaf_hash,
+                    al.id - $1 as row_offset
+                FROM append_only_log al
+                WHERE al.id > $1
+                ORDER BY al.id
+                LIMIT $2
+            ),
+            inserted AS (
+                INSERT INTO processed_log (id, source_id, data, leaf_hash)
+                SELECT 
+                    $3 + row_offset - 1,
+                    source_id,
+                    data,
+                    leaf_hash
+                FROM source_rows
+                RETURNING id
+            )
+            SELECT COUNT(*), MIN(id), MAX(id)
+            FROM inserted'
+            USING last_processed_source_id, batch_size, next_id
+            INTO explain_result;
+            
+            RETURN QUERY SELECT explain_result;
+        END;
+        $$;
+    "#).await?;
+    println!("✅ Function 'analyze_next_batch' is ready.");
+
+    // 6. Create validation function
     client.batch_execute(r#"
         CREATE OR REPLACE FUNCTION validate_processed_sequence()
         RETURNS TABLE (
