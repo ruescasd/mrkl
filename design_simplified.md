@@ -142,6 +142,39 @@ async fn periodic_update(interval: Duration) {
    - Simple to prune source table after processing
    - Processed table becomes authoritative
 
+## Future Evolution: Multi-Source Verification
+
+The current design can be evolved into a more general-purpose verification system by recognizing that:
+
+1. **Source Abstraction**
+   - Any table can serve as a source if it provides:
+     - A strict ordering (e.g., timestamp or sequential ID)
+     - A hash of its content
+   - The source table doesn't need to match any specific schema
+   - Multiple different source tables can feed into the same verification system
+
+2. **Processed Log Simplification**
+   - The `processed_log` doesn't need to duplicate source data
+   - Only requires:
+     - Sequential IDs (for ordering)
+     - Source reference (table + id)
+     - Hash (for verification)
+   - No schema dependency on source tables
+
+3. **Universal Ledger Potential**
+   - Can create a single verifiable timeline across multiple systems
+   - Interleave events from different sources while maintaining verifiability
+   - Prove temporal relationships between events from different systems
+   - Bind disparate sources of events into one consistent, verifiable chain
+
+4. **Clean Abstraction**
+   - Verification layer becomes completely separate from data layer
+   - Source systems maintain their own data formats
+   - Single verification chain can serve multiple use cases
+   - No need to modify source systems beyond adding hash computation
+
+This evolution would transform the system from a specific implementation into a general-purpose tool for creating verifiable cross-system event orderings, without caring about the actual content of those events.
+
 ## Conclusion
 
-This design dramatically simplifies the system by leveraging PostgreSQL's strong isolation capabilities to create an immutable, ordered source of truth. It trades some latency for strong consistency guarantees and operational simplicity.
+This design dramatically simplifies the system by leveraging PostgreSQL's strong isolation capabilities to create an immutable, ordered source of truth. It trades some latency for strong consistency guarantees and operational simplicity. Furthermore, its potential evolution into a multi-source verification system demonstrates its fundamental value as a general-purpose tool for establishing verifiable ordering across disparate systems.

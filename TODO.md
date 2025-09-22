@@ -1,78 +1,65 @@
 # Merkle Tree PostgreSQL Integration - TODO List
 
 ## Project Overview
-This project implements a real-time Merkle tree that tracks PostgreSQL table updates using LISTEN/NOTIFY, providing cryptographic proofs of data inclusion. The system maintains an in-memory Merkle tree that stays synchronized with the database, enabling proof generation without modifying the underlying database.
+This project implements a verifiable log using PostgreSQL, providing cryptographic proofs of data inclusion and ordering. The system uses batch processing with strong ordering guarantees to maintain a consistent Merkle tree state, enabling reliable proof generation while ensuring data consistency.
 
 ## Current Status
+- ✅ Robust batch processing with strict ordering
+- ✅ Two-table design with strong consistency guarantees
+- ✅ High-performance batch inserts (~575K rows/sec)
+- ✅ Gap-free sequential processing
 - ✅ Basic Merkle tree implementation with ct-merkle
-- ✅ PostgreSQL LISTEN/NOTIFY integration
-- ✅ Real-time tree updates
-- ✅ Basic inclusion proof generation
-- ✅ Tree rebuild functionality
+- ✅ Advisory locks for concurrency control
+- ✅ Full ACID compliance and durability
 
 ## Planned Improvements
 
-### 1. Optimize Tree Entry Lookup
-- [ ] Replace linear search with HashMap<String, usize>
-- [ ] Add HashMap to track data -> index mapping
-- [ ] Update push operations to maintain the mapping
-- [ ] Update get_inclusion_proof to use the map
-- [ ] Consider persistence strategy for the mapping
+### 1. Multi-Source Verification System
+- [ ] Remove data column dependency from processed_log
+- [ ] Add source table identifier to processed_log
+- [ ] Implement generic source table interface
+- [ ] Add support for multiple concurrent source tables
+- [ ] Create example with multiple event sources
 
-### 2. Implement HashableLeaf Optimization
-- [ ] Create custom type wrapping data and its hash (using existing leaf_hash column)
-- [ ] Implement HashableLeaf trait for the custom type
-- [ ] Modify tree operations to use the existing leaf_hash values
-- [ ] Update fetch_all_entries and notification handler to use HashedEntry type
-- [ ] Add validation to ensure hash consistency
+### 2. Operational Improvements
+- [ ] Implement proper error handling and recovery
+- [ ] Add structured logging
+- [ ] Create monitoring dashboards
+- [ ] Add performance metrics collection
+- [ ] Implement health checks
 
-### 3. Improve Error Handling
-- [ ] Create custom Error enum for the application
-- [ ] Add proper error context and chaining
-- [ ] Replace println! with proper logging
-- [ ] Add error type conversions (From implementations)
-- [ ] Add error recovery strategies
+### 3. Proof System Implementation
+- [ ] Add inclusion proof generation
+- [ ] Implement proof verification endpoints
+- [ ] Add consistency proofs between tree states
+- [ ] Create proof documentation
+- [ ] Add example code in multiple languages
 
-### 4. Add Proof Verification Endpoint
-- [ ] Add ProofVerification struct for request parsing
-- [ ] Implement /verify endpoint
-- [ ] Add documentation with example requests
-- [ ] Include test cases
-- [ ] Add rate limiting
+### 4. Administrative Interface
+- [ ] Create status dashboard
+- [ ] Add manual processing controls
+- [ ] Implement source table management
+- [ ] Create monitoring views
+- [ ] Add configuration management
 
-### 5. Add Proof Documentation
-- [ ] Document proof generation API
-- [ ] Document proof verification (API and manual)
-- [ ] Provide example code in multiple languages
-- [ ] Document security considerations
-- [ ] Add OpenAPI/Swagger documentation
-
-### 6. Implement Consistency Proofs
-- [ ] Add consistency proof generation endpoint
-- [ ] Add consistency proof verification
-- [ ] Update documentation
-- [ ] Add examples of proving tree state transitions
+### 5. Production Readiness
+- [ ] Implement backup strategies
+- [ ] Add data retention policies
+- [ ] Create upgrade procedures
+- [ ] Document operational procedures
+- [ ] Add deployment guides
 
 ## Technical Notes
 
-### Hashmap Implementation Considerations
-- Need to handle initial population during rebuild
-- Consider memory usage vs. lookup time tradeoff
-- May need periodic cleanup for very large datasets
-
-### HashableLeaf Implementation
-```rust
-pub struct HashedEntry {
-    data: String,
-    hash: [u8; 32],  // Pre-computed SHA-256 hash
-}
-
-impl HashableLeaf for HashedEntry {
-    fn as_bytes(&self) -> &[u8] {
-        &self.hash
-    }
-}
-```
+### Multi-Source Design Considerations
+- Source tables need only:
+  - Ordering guarantee (timestamp or sequence)
+  - Hash computation capability
+- processed_log focuses on verification:
+  - Sequential IDs
+  - Source reference
+  - Hash storage
+  - No data duplication
 
 ### Error Handling Strategy
 ```rust
@@ -81,23 +68,23 @@ pub enum AppError {
     #[error("Database error: {0}")]
     Database(#[from] tokio_postgres::Error),
     
-    #[error("Tree error: {0}")]
-    Tree(String),
+    #[error("Processing error: {0}")]
+    Processing(String),
     
     #[error("Proof verification failed: {0}")]
     ProofVerification(String),
     
-    #[error("Invalid request: {0}")]
-    InvalidRequest(String),
+    #[error("Source table error: {0}")]
+    SourceTable(String),
 }
 ```
 
 ## Future Considerations
-- Performance benchmarking and optimization
-- High availability setup with replicas
-- Backup and recovery procedures
-- Monitoring and alerting
-- Integration with popular blockchain networks
-- Support for range proofs
-- Batch proof generation
-- Proof aggregation
+- Support for more complex proof types
+- Integration with external verification systems
+- Real-time proof generation and caching
+- Horizontal scaling strategies
+- Cross-database verification
+- Audit trail generation
+- Historical state queries
+- Performance optimization at scale
