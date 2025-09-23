@@ -2,6 +2,7 @@ use anyhow::Result;
 use reqwest::Client as HttpClient;
 use sha2::{Digest, Sha256};
 use tokio_postgres::{NoTls};
+use base64::Engine;
 use std::time::Duration;
 use crate::{MerkleProof, ConsistencyProof};
 
@@ -72,18 +73,13 @@ impl Client {
             .json::<serde_json::Value>()
             .await?;
 
-        // Parse the root from the response
-        let root_str = response["merkle_root"]
+        // Parse the base64 encoded root from the response
+        let root_b64 = response["merkle_root"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid root response"))?;
         
-        // Convert string representation to bytes
-        let root_bytes = root_str
-            .trim_matches(|c| c == '[' || c == ']')
-            .split(',')
-            .map(str::trim)
-            .map(|s| s.parse::<u8>())
-            .collect::<Result<Vec<_>, _>>()?;
+        // Decode base64 back to bytes
+        let root_bytes = base64::engine::general_purpose::STANDARD.decode(root_b64)?;
 
         Ok(root_bytes)
     }

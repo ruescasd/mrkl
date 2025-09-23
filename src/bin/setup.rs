@@ -232,8 +232,6 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
     "#).await?;
     println!("✅ Function 'validate_processed_sequence' is ready.");
 
-    // No test data is added by default now
-
     Ok(())
 }
 

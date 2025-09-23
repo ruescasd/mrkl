@@ -20,7 +20,6 @@ async fn main() -> Result<()> {
 
     println!("Connecting to database...");
     
-    // Connect to the database and split into client and raw connection
     let (client, connection) = tokio_postgres::connect(
         &std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"),
         NoTls,
@@ -74,8 +73,7 @@ async fn main() -> Result<()> {
                         // Time the retrieval from processed_log
                         let fetch_start = std::time::Instant::now();
                         
-                        // Instead of using first_id and last_id from batch result,
-                        // query everything after our last known processed ID
+                        // Query everything after our last known processed ID
                         let fetch_result = process_state.client.query(
                             "SELECT id, leaf_hash 
                              FROM processed_log 
@@ -91,7 +89,7 @@ async fn main() -> Result<()> {
                                 // Start timing the tree construction
                                 let tree_start = std::time::Instant::now();
                                 
-                                // Update the merkle state and maps atomically
+                                // Update the merkle state and maps
                                 let mut merkle_state = process_state.merkle_state.write();
 
                                 for row in rows {

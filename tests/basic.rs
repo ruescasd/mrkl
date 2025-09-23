@@ -1,6 +1,7 @@
 use anyhow::Result;
 use mrkl::client::Client;
 use serial_test::serial;
+use base64::Engine;
 
 async fn setup_client() -> Result<Client> {
     // Load environment variables from .env file
@@ -139,7 +140,7 @@ async fn test_burst_operations() -> Result<()> {
     
     // Get final root
     let root = client.get_root().await?;
-    println!("🌳 Final merkle root after burst: {:?}", root);
+    println!("🌳 Final merkle root after burst: {}", base64::engine::general_purpose::STANDARD.encode(&root));
     
     // Verify all entries are properly included using their hashes
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
@@ -204,7 +205,7 @@ async fn test_large_batch_performance() -> Result<()> {
     // Get and verify final root
     let root = client.get_root().await?;
     
-    println!("Final root: {:?}", root);
+    println!("Final root: {}", base64::engine::general_purpose::STANDARD.encode(&root));
     
     // Verify some sample entries
     println!("\n🔍 Verifying sample entries...");

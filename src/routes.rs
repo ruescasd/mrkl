@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::json;
 use ct_merkle::RootHash;
 use sha2::{Sha256, digest::Output};
+use base64::Engine;
 
 use crate::{LeafHash, MerkleProof, ConsistencyProof};
 
@@ -67,7 +68,7 @@ pub async fn get_merkle_root(
     let merkle_state = state.merkle_state.read();
     let root = merkle_state.tree.root();
     Json(json!({
-        "merkle_root": format!("{:?}", root.as_bytes()),
+        "merkle_root": base64::engine::general_purpose::STANDARD.encode(root.as_bytes()),
         "tree_size": merkle_state.tree.len(),
         "last_processed_id": merkle_state.last_processed_id,
         "status": "ok"
@@ -145,7 +146,7 @@ pub async fn trigger_rebuild(
         Ok((size, root, last_id)) => Json(json!({
             "status": "ok",
             "tree_size": size,
-            "merkle_root": format!("{:?}", root),
+            "merkle_root": base64::engine::general_purpose::STANDARD.encode(root),
             "last_processed_id": last_id,
         })),
         Err(e) => Json(json!({
