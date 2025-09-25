@@ -64,25 +64,14 @@ impl CtMerkleTree {
         self.tree.len() == 0
     }
 
-    /// Generates an inclusion proof for a given leaf hash
+    /// Generates an inclusion proof for a given leaf hash against the current root
     pub fn prove_inclusion(&self, hash: &[u8]) -> Result<InclusionProof<Sha256>, ProofError> {
-        let idx = self.index_map.get(hash)
-            .ok_or(ProofError::LeafNotFound)?;
-        Ok(self.tree.prove_inclusion(*idx))
+        self.prove_inclusion_at_root(hash, &self.root())
     }
 
     /// Generates a consistency proof between the current tree and a historical root
     pub fn prove_consistency(&self, old_root: &[u8]) -> Result<ConsistencyProof<Sha256>, ProofError> {
-        // Can't prove consistency with current root
-        if old_root == self.root() {
-            return Err(ProofError::SameRoot);
-        }
-
-        let old_size: usize = *self.root_map.get(old_root)
-            .ok_or(ProofError::RootNotFound)?;
-        let old_size: u64 = old_size.try_into().unwrap();
-        let num_additions = self.tree.len() - old_size;
-        Ok(self.tree.prove_consistency(num_additions.try_into().unwrap()))
+        self.prove_consistency_between(old_root, &self.root())
     }
 
     /// Verifies an inclusion proof for a given leaf hash against the current root
@@ -91,19 +80,7 @@ impl CtMerkleTree {
         leaf_hash: &[u8],
         proof: &InclusionProof<Sha256>,
     ) -> Result<bool, ct_merkle::InclusionVerifError> {
-        // Get the index for this leaf hash
-        let index = match self.index_map.get(leaf_hash) {
-            Some(idx) => *idx,
-            None => return Ok(false),
-        };
-
-        // Create leaf hash wrapper
-        let leaf = LeafHash::new(leaf_hash.to_vec());
-
-        // Get current root and verify against it
-        let current_root = self.tree.root();
-        current_root.verify_inclusion(&leaf, index as u64, proof)
-            .map(|_| true)
+        self.verify_inclusion_at_root(leaf_hash, &self.root(), proof)
     }
 
     /// Verifies a consistency proof between a historical root and the current root
@@ -112,28 +89,7 @@ impl CtMerkleTree {
         old_root: &[u8],
         proof: &ConsistencyProof<Sha256>,
     ) -> Result<bool, ct_merkle::ConsistencyVerifError> {
-        // Check if old_root is the current root
-        if old_root == self.root() {
-            return Err(ct_merkle::ConsistencyVerifError::MalformedProof);
-        }
-
-        // Get size from root map for old root
-        let old_size = match self.root_map.get(old_root) {
-            Some(size) => *size,
-            None => return Ok(false),
-        };
-
-        // Create root hash from old root bytes
-        let mut old_digest = sha2::digest::Output::<Sha256>::default();
-        old_digest.copy_from_slice(old_root);
-        let old_root_hash = ct_merkle::RootHash::new(old_digest, old_size as u64);
-
-        // Get current root
-        let current_root = self.tree.root();
-
-        // Verify the proof
-        current_root.verify_consistency(&old_root_hash, proof)
-            .map(|_| true)
+        self.verify_consistency_between(old_root, &self.root(), proof)
     }
 
     /// Gets the index for a given leaf hash
@@ -154,7 +110,7 @@ impl CtMerkleTree {
     }
 
     /// Returns a tree corresponding to the historical state at the given root hash.
-    pub fn rewind(&self, historical_root: &[u8]) -> Result<MemoryBackedTree<Sha256, LeafHash>, RewindError> {
+    pub(crate) fn rewind(&self, historical_root: &[u8]) -> Result<MemoryBackedTree<Sha256, LeafHash>, RewindError> {
         // Get size from root map
         let size = self.root_map.get(historical_root)
             .ok_or(RewindError::RootNotFound)?;

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::RwLock;
 use ct_merkle::{HashableLeaf, RootHash};
-use ct_merkle::InclusionProof;
+use ct_merkle::{InclusionProof, ConsistencyProof as CtConsistencyProof};
 use digest::{Update};
 use sha2::{Sha256, digest::Output};
 use serde::{Serialize, Deserialize};
@@ -85,7 +85,7 @@ impl ConsistencyProof {
         );
 
         // Create consistency proof from stored bytes
-        let proof = ct_merkle::ConsistencyProof::<Sha256>::try_from_bytes(self.proof_bytes.clone())?;
+        let proof = CtConsistencyProof::<Sha256>::try_from_bytes(self.proof_bytes.clone())?;
 
         // Verify consistency
         new_root.verify_consistency(&old_root, &proof).map(|_| true)
@@ -290,7 +290,7 @@ pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>, i
     
     // Measure database fetch time
     let fetch_start = std::time::Instant::now();
-    let (leaf_hashes, index_mappings, last_id) = routes::fetch_all_entries(&state.client).await?;
+    let (leaf_hashes, _s, last_id) = routes::fetch_all_entries(&state.client).await?;
     let fetch_time = fetch_start.elapsed();
     println!("📥 Database fetch completed in {}ms", fetch_time.as_millis());
     
