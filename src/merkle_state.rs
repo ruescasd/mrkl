@@ -1,12 +1,10 @@
-use ct_merkle::mem_backed_tree::MemoryBackedTree;
-use sha2::Sha256;
-use crate::LeafHash;
+use crate::{LeafHash, tree::CtMerkleTree};
 
 /// A combined state holding the merkle tree and its corresponding last processed ID.
 /// This ensures that readers always see a consistent view of both values.
 pub struct MerkleState {
-    /// The memory-backed merkle tree storing just the leaf hashes
-    pub tree: MemoryBackedTree<Sha256, LeafHash>,
+    /// The history-tracking merkle tree storing leaf hashes and their indices
+    pub tree: CtMerkleTree,
     /// The ID of the last processed log entry incorporated into the tree
     pub last_processed_id: i64,
 }
@@ -15,7 +13,7 @@ impl MerkleState {
     /// Creates a new empty merkle state
     pub fn new() -> Self {
         Self {
-            tree: MemoryBackedTree::new(),
+            tree: CtMerkleTree::new(),
             last_processed_id: 0,
         }
     }

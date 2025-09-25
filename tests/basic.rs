@@ -1,3 +1,4 @@
+// cargo test --test '*'
 use anyhow::Result;
 use mrkl::client::Client;
 use serial_test::serial;

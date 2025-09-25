@@ -4,8 +4,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use ct_merkle::RootHash;
-use sha2::{Sha256, digest::Output};
 use base64::Engine;
 
 use crate::{LeafHash, MerkleProof, ConsistencyProof};
@@ -68,7 +66,7 @@ pub async fn get_merkle_root(
     let merkle_state = state.merkle_state.read();
     let root = merkle_state.tree.root();
     Json(json!({
-        "merkle_root": base64::engine::general_purpose::STANDARD.encode(root.as_bytes()),
+        "merkle_root": base64::engine::general_purpose::STANDARD.encode(&root),
         "tree_size": merkle_state.tree.len(),
         "last_processed_id": merkle_state.last_processed_id,
         "status": "ok"
@@ -97,42 +95,39 @@ pub async fn get_inclusion_proof(
     let merkle_state = state.merkle_state.read();
     
     // Look up the index in our O(1) index map
-    let found_idx = state.index_map.get(&query.hash);
+    let tree = &merkle_state.tree;
     
-    // Create LeafHash from provided hash
-    let query_hash = LeafHash { hash: query.hash };
-    
-    match found_idx {
-        Some(idx) => {
-            // Generate the proof
-            let proof = merkle_state.tree.prove_inclusion(idx);
-            let root = merkle_state.tree.root();
-            
-            // Verify the proof immediately as a sanity check
-            match root.verify_inclusion(&query_hash, idx as u64, &proof) {
-                Ok(()) => {
-                    // Create a MerkleProof with all necessary data
-                    let merkle_proof = MerkleProof {
-                        index: idx,
-                        proof_bytes: proof.as_bytes().iter().copied().collect(),
-                        root: root.as_bytes().to_vec(),
-                        tree_size: merkle_state.tree.len() as usize,
-                    };
-                    
-                    Json(json!({
-                        "status": "ok",
-                        "proof": merkle_proof
-                    }))
-                },
-                Err(e) => Json(json!({
-                    "status": "error",
-                    "error": format!("Generated proof failed verification: {}", e)
-                }))
-            }
-        },
-        None => Json(json!({
+    // Try to generate and verify proof using our new tree's method
+    let proof = match tree.prove_inclusion(&query.hash) {
+        Ok(proof) => proof,
+        Err(e) => return Json(json!({
             "status": "error",
-            "error": "Hash not found in the tree"
+            "error": format!("Failed to generate inclusion proof: {:?}", e)
+        }))
+    };
+    
+    // Verify the proof as a sanity check
+    match tree.verify_inclusion(&query.hash, &proof) {
+        Ok(true) => {
+            // Get the index (safe because prove_inclusion succeeded)
+            let index = tree.get_index(&query.hash).unwrap();
+            
+            // Create MerkleProof with all necessary data
+            let merkle_proof = MerkleProof {
+                index,
+                proof_bytes: proof.as_bytes().iter().copied().collect(),
+                root: tree.root(),
+                tree_size: tree.len(),
+            };
+
+            Json(json!({
+                "status": "ok",
+                "proof": merkle_proof
+            }))
+        },
+        Ok(false) | Err(_) => Json(json!({
+            "status": "error",
+            "error": "Generated proof failed verification"
         }))
     }
 }
@@ -175,71 +170,38 @@ pub async fn get_consistency_proof(
             }));
         }
     };
-    // Look up size for historical root
-    let old_size = match state.root_map.get_size(&query.old_root) {
-        Some(size) => size,
-        None => return Json(json!({
+    let merkle_state = state.merkle_state.read();
+    let tree = &merkle_state.tree;
+
+    // Try to generate consistency proof
+    let proof = match tree.prove_consistency(&query.old_root) {
+        Ok(proof) => proof,
+        Err(e) => return Json(json!({
             "status": "error",
-            "error": "Historical root hash not found in tree history"
+            "error": format!("Failed to generate consistency proof: {:?}", e)
         }))
     };
 
-    // Get current tree info
-    let merkle_state = state.merkle_state.read();
-    let current_size = merkle_state.tree.len() as usize;
-    let current_root = merkle_state.tree.root();
-
-    // Validate the sizes
-    if old_size > current_size {
-        return Json(json!({
+    // Verify the proof
+    match tree.verify_consistency(&query.old_root, &proof) {
+        Ok(true) => {
+            let old_size = tree.get_size_for_root(&query.old_root).unwrap(); // Safe because prove_consistency succeeded
+            
+            // Return the verified proof
+            Json(json!({
+                "status": "ok",
+                "proof": ConsistencyProof {
+                    old_tree_size: old_size,
+                    old_root: query.old_root,
+                    proof_bytes: proof.as_bytes().iter().copied().collect(),
+                    new_root: tree.root(),
+                    new_tree_size: tree.len(),
+                }
+            }))
+        },
+        Ok(false) | Err(_) => Json(json!({
             "status": "error",
-            "error": format!("Invalid request: Historical tree size {} is larger than current size {}", 
-                           old_size, current_size)
-        }));
+            "error": "Generated proof failed verification"
+        }))
     }
-
-    if old_size == 0 {
-        return Json(json!({
-            "status": "error",
-            "error": "Invalid request: Cannot generate consistency proof for empty tree"
-        }));
-    }
-
-    if old_size == current_size {
-        return Json(json!({
-            "status": "error", 
-            "error": "Invalid request: No new entries since historical root"
-        }));
-    }
-    
-    // Calculate how many items were added since historical root
-    let num_additions = current_size - old_size;
-
-    // Create RootHash objects for verification
-    let mut old_digest = Output::<Sha256>::default();
-    old_digest.copy_from_slice(&query.old_root);
-    let old_root = RootHash::<Sha256>::new(old_digest, old_size as u64);
-    
-    // Generate consistency proof using current tree state
-    let proof = merkle_state.tree.prove_consistency(num_additions);
-    
-    if let Err(e) = current_root.verify_consistency(&old_root, &proof) {
-        println!("Consistency proof verification failed: {}", e);
-        return Json(json!({
-            "status": "error",
-            "error": format!("Generated proof failed verification: {}", e)
-        }));
-    }
-
-    // Return the verified proof
-    Json(json!({
-        "status": "ok",
-        "proof": ConsistencyProof {
-            old_tree_size: old_size,
-            old_root: query.old_root,
-            proof_bytes: proof.as_bytes().iter().copied().collect(),
-            new_root: current_root.as_bytes().to_vec(),
-            new_tree_size: current_size,
-        }
-    }))
 }

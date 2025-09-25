@@ -13,6 +13,7 @@ use anyhow::Result;
 pub mod routes;
 pub mod client;
 pub mod merkle_state;
+pub mod tree;
 
 // Re-export route handlers and types
 pub use routes::{
@@ -32,10 +33,6 @@ pub use routes::{ProofQuery, ConsistencyQuery};
 pub struct AppState {
     /// The merkle state containing both the tree and its last processed ID
     pub merkle_state: Arc<parking_lot::RwLock<MerkleState>>,
-    /// Mapping from leaf hashes to their indices in the tree
-    pub index_map: HashIndexMap,
-    /// Mapping from root hashes to their tree sizes
-    pub root_map: RootMap,
     /// Database client for operations that need it
     pub client: Arc<tokio_postgres::Client>,
 }
@@ -300,29 +297,17 @@ pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>, i
     // Measure computation time
     let compute_start = std::time::Instant::now();
     
-    // Clear all data structures
-    state.index_map.clear();
-    state.root_map.clear();
-
     // Create new merkle state and build tree
     let mut merkle_state = MerkleState::new();
     
-    // Add leaf hashes to the tree
+    // Add leaf hashes to the tree (this will update internal maps)
     for leaf_hash in leaf_hashes {
         merkle_state.update_with_entry(leaf_hash, last_id);
-        // Record root hash after each insertion
-        let current_root = merkle_state.tree.root();
-        state.root_map.insert(current_root.as_bytes().to_vec(), merkle_state.tree.len() as usize);
-    }
-    
-    // Update index mappings for the leaf hashes
-    for (leaf_hash, idx) in index_mappings {
-        state.index_map.insert(leaf_hash, idx);
     }
     
     // Get final state
-    let size = merkle_state.tree.len() as usize;
-    let root = merkle_state.tree.root().as_bytes().to_vec();
+    let size = merkle_state.tree.len();
+    let root = merkle_state.tree.root();
     
     let compute_time = compute_start.elapsed();
     let total_time = fetch_time + compute_time;

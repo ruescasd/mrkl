@@ -35,11 +35,9 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Initialize shared state with empty merkle state and maps
+    // Initialize shared state with empty merkle state
     let app_state = AppState {
         merkle_state: Arc::new(parking_lot::RwLock::new(MerkleState::new())),
-        index_map: HashIndexMap::new(),
-        root_map: RootMap::new(),
         client: client.clone(),
     };
 
@@ -95,16 +93,10 @@ async fn main() -> Result<()> {
                                 for row in rows {
                                     let id: i64 = row.get("id");
                                     let hash: Vec<u8> = row.get("leaf_hash");
-                                    let leaf_hash = LeafHash::new(hash.clone());
-                                    let idx = merkle_state.tree.len();
+                                    let leaf_hash = LeafHash::new(hash);
                                     
                                     // Update tree and ID atomically
                                     merkle_state.update_with_entry(leaf_hash, id);
-                                    
-                                    // Update auxiliary maps
-                                    process_state.index_map.insert(hash, idx as usize);
-                                    let current_root = merkle_state.tree.root();
-                                    process_state.root_map.insert(current_root.as_bytes().to_vec(), merkle_state.tree.len() as usize);
                                 }
                                 
                                 let tree_duration = tree_start.elapsed();
