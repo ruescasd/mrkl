@@ -2,25 +2,25 @@ use axum::{
     extract::{Query, State},
     response::Json,
 };
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use serde_json::json;
-use base64::Engine;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 
 use crate::{LeafHash, InclusionProof, ConsistencyProof};
 
 // Type alias for our JSON responses
 type JsonResponse = Json<serde_json::Value>;
 
-#[derive(Debug, Deserialize)]
-pub struct ProofQuery {
-    #[serde(with = "crate::proof_bytes_format")]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InclusionQuery {
+    #[serde(with = "crate::routes::proof_bytes_format")]
     pub hash: Vec<u8>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ConsistencyQuery {
     /// The root hash of the historical tree to prove consistency with
-    #[serde(with = "crate::proof_bytes_format")]
+    #[serde(with = "crate::routes::proof_bytes_format")]
     pub old_root: Vec<u8>,
 }
 
@@ -75,7 +75,7 @@ pub async fn get_merkle_root(
 
 // Handler for the /proof endpoint that generates inclusion proofs
 pub async fn get_inclusion_proof(
-    query_result: Result<Query<ProofQuery>, axum::extract::rejection::QueryRejection>,
+    query_result: Result<Query<InclusionQuery>, axum::extract::rejection::QueryRejection>,
     State(state): State<crate::AppState>,
 ) -> JsonResponse {
     // Handle query parameter parsing errors
@@ -203,5 +203,64 @@ pub async fn get_consistency_proof(
             "status": "error",
             "error": "Generated proof failed verification"
         }))
+    }
+}
+
+// Custom serialization for byte arrays to use base64
+pub mod proof_bytes_format {
+    use serde::{Serializer, Deserializer};
+    use super::*;
+
+    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&BASE64.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+        String::deserialize(deserializer)
+            .and_then(|string| BASE64.decode(string.as_bytes())
+                .map_err(|err| Error::custom(err.to_string())))
+    }
+
+    pub mod optional {
+        use super::*;
+        use serde::{Serializer, Deserializer};
+
+        pub fn serialize<S>(bytes: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            match bytes {
+                Some(b) => super::serialize(b, serializer),
+                None => serializer.serialize_none()
+            }
+        }
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            #[derive(Deserialize)]
+            #[serde(untagged)]
+            enum StringOrNull {
+                String(String),
+                Null,
+            }
+
+            match StringOrNull::deserialize(deserializer)? {
+                StringOrNull::String(s) => {
+                    BASE64.decode(s.as_bytes())
+                        .map(Some)
+                        .map_err(serde::de::Error::custom)
+                },
+                StringOrNull::Null => Ok(None),
+            }
+        }
     }
 }

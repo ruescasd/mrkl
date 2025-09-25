@@ -85,19 +85,20 @@ impl Client {
     }
 
     /// Gets an inclusion proof for a given hash or piece of data
-    pub async fn get_proof(&self, data: &str) -> Result<InclusionProof> {
+    pub async fn get_inclusion_proof(&self, data: &str) -> Result<InclusionProof> {
         // Compute the hash from the data
         let mut hasher = Sha256::new();
         hasher.update(data.as_bytes());
         let hash_result = hasher.finalize();
-        
-        // Base64 encode the hash for transmission
-        let hash_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, hash_result.as_slice());
+
+        let query = crate::InclusionQuery {
+            hash: hash_result.to_vec(),
+        };
 
         // Make the request with the base64 encoded hash
         let response = self.http_client
             .get(&format!("{}/proof", self.api_base_url))
-            .query(&[("hash", hash_b64)])
+            .query(&query)
             .send()
             .await?;
             
@@ -117,33 +118,15 @@ impl Client {
         Ok(proof)
     }
 
-    /// Rebuilds the merkle tree from scratch
-    pub async fn trigger_rebuild(&self) -> Result<()> {
-        let response = self.http_client
-            .get(&format!("{}/rebuild", self.api_base_url))
-            .send()
-            .await?
-            .json::<serde_json::Value>()
-            .await?;
-
-        if response["status"].as_str() == Some("error") {
-            return Err(anyhow::anyhow!(
-                "Error triggering rebuild: {}",
-                response["error"].as_str().unwrap_or("unknown error")
-            ));
-        }
-
-        Ok(())
-    }
-
     /// Gets a consistency proof proving that the current tree state is consistent with an older root hash
     pub async fn get_consistency_proof(&self, old_root: Vec<u8>) -> Result<ConsistencyProof> {
-        // Base64 encode the old root hash for transmission
-        let old_root_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &old_root);
+        let query = crate::ConsistencyQuery {
+            old_root,
+        };
 
         let response = self.http_client
             .get(&format!("{}/consistency", self.api_base_url))
-            .query(&[("old_root", old_root_b64)])
+            .query(&query)
             .send()
             .await?;
             
@@ -180,5 +163,24 @@ impl Client {
         
         // Verify the proof cryptographically
         proof.verify().map_err(|e| anyhow::anyhow!("Proof verification failed: {}", e))
+    }
+
+    /// Rebuilds the merkle tree from scratch
+    pub async fn trigger_rebuild(&self) -> Result<()> {
+        let response = self.http_client
+            .get(&format!("{}/rebuild", self.api_base_url))
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        if response["status"].as_str() == Some("error") {
+            return Err(anyhow::anyhow!(
+                "Error triggering rebuild: {}",
+                response["error"].as_str().unwrap_or("unknown error")
+            ));
+        }
+
+        Ok(())
     }
 }

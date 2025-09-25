@@ -41,7 +41,7 @@ async fn test_inclusion_proofs() -> Result<()> {
     
     // Verify inclusion proofs for all entries using their hashes
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
-        let proof = client.get_proof(entry).await?;
+        let proof = client.get_inclusion_proof(entry).await?;
         
         // Verify proof has correct root
         assert_eq!(proof.root, root, "Proof root should match current tree root for entry '{}'", entry);
@@ -145,7 +145,7 @@ async fn test_burst_operations() -> Result<()> {
     
     // Verify all entries are properly included using their hashes
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
-        let proof = client.get_proof(entry).await?;
+        let proof = client.get_inclusion_proof(entry).await?;
         assert_eq!(root, proof.root, "Merkle root mismatch for entry: {}", entry);
         assert!(proof.verify(hash)?, "Proof verification failed for entry: {}", entry);
         println!("✅ Verified proof for '{}' at index {}", entry, proof.index);
@@ -201,7 +201,7 @@ async fn test_large_batch_performance() -> Result<()> {
     
     // Wait for final processing and get root
     println!("\n⏳ Waiting for all entries to be processed...");
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     
     // Get and verify final root
     let root = client.get_root().await?;
@@ -214,7 +214,7 @@ async fn test_large_batch_performance() -> Result<()> {
     
     for idx in sample_indices {
         let (entry, hash) = &all_hashes[idx];
-        let proof = client.get_proof(entry).await?;
+        let proof = client.get_inclusion_proof(entry).await?;
         assert!(proof.verify(hash)?, "Proof verification failed for entry: {}", entry);
         println!("✅ Verified entry at index {}", idx);
     }

@@ -4,7 +4,6 @@ use ct_merkle::{InclusionProof as CtInclusionProof, ConsistencyProof as CtConsis
 use digest::{Update};
 use sha2::{Sha256, digest::Output};
 use serde::{Serialize, Deserialize};
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use anyhow::Result;
 
 // Export modules
@@ -24,7 +23,7 @@ pub use routes::{
 pub use merkle_state::MerkleState;
 
 // Re-export types used by handlers
-pub use routes::{ProofQuery, ConsistencyQuery};
+pub use routes::{InclusionQuery, ConsistencyQuery};
 
 /// Shared state between HTTP server and periodic processor
 #[derive(Clone)]
@@ -41,13 +40,10 @@ pub struct ConsistencyProof {
     /// The number of leaves in the old (smaller) tree
     pub old_tree_size: usize,
     /// The root hash of the old tree 
-    #[serde(with = "proof_bytes_format")]
     pub old_root: Vec<u8>,
     /// The consistency proof path bytes
-    #[serde(with = "proof_bytes_format")]
     pub proof_bytes: Vec<u8>,
     /// The root hash of the new (larger) tree
-    #[serde(with = "proof_bytes_format")]
     pub new_root: Vec<u8>,
     /// The total number of leaves in the new tree
     pub new_tree_size: usize,
@@ -96,10 +92,8 @@ pub struct InclusionProof {
     /// The index of the leaf in the tree
     pub index: usize,
     /// The root hash at the time the proof was generated
-    #[serde(with = "proof_bytes_format")]
     pub root: Vec<u8>,
     /// The inclusion proof path as raw bytes
-    #[serde(with = "proof_bytes_format")]
     pub proof_bytes: Vec<u8>,
     /// The total number of leaves in the tree at the time of proof generation
     pub tree_size: usize,
@@ -130,65 +124,6 @@ impl InclusionProof {
         match root_hash.verify_inclusion(&leaf_hash, self.index as u64, &proof) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false)
-        }
-    }
-}
-
-// Custom serialization for byte arrays to use base64
-pub mod proof_bytes_format {
-    use serde::{Serializer, Deserializer};
-    use super::*;
-
-    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&BASE64.encode(bytes))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error;
-        String::deserialize(deserializer)
-            .and_then(|string| BASE64.decode(string.as_bytes())
-                .map_err(|err| Error::custom(err.to_string())))
-    }
-
-    pub mod optional {
-        use super::*;
-        use serde::{Serializer, Deserializer};
-
-        pub fn serialize<S>(bytes: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            match bytes {
-                Some(b) => super::serialize(b, serializer),
-                None => serializer.serialize_none()
-            }
-        }
-
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            #[derive(Deserialize)]
-            #[serde(untagged)]
-            enum StringOrNull {
-                String(String),
-                Null,
-            }
-
-            match StringOrNull::deserialize(deserializer)? {
-                StringOrNull::String(s) => {
-                    BASE64.decode(s.as_bytes())
-                        .map(Some)
-                        .map_err(serde::de::Error::custom)
-                },
-                StringOrNull::Null => Ok(None),
-            }
         }
     }
 }
