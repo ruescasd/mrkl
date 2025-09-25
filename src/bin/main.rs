@@ -11,7 +11,7 @@ use axum::{
 use std::net::SocketAddr;
 
 use mrkl::MerkleState;
-use mrkl::{LeafHash, HashIndexMap, RootMap};
+use mrkl::LeafHash;
 use mrkl::AppState;
 
 #[tokio::main]

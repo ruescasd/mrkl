@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use tokio_postgres::{NoTls};
 use base64::Engine;
 use std::time::Duration;
-use crate::{MerkleProof, ConsistencyProof};
+use crate::{InclusionProof, ConsistencyProof};
 
 pub struct Client {
     http_client: HttpClient,
@@ -85,7 +85,7 @@ impl Client {
     }
 
     /// Gets an inclusion proof for a given hash or piece of data
-    pub async fn get_proof(&self, data: &str) -> Result<MerkleProof> {
+    pub async fn get_proof(&self, data: &str) -> Result<InclusionProof> {
         // Compute the hash from the data
         let mut hasher = Sha256::new();
         hasher.update(data.as_bytes());

@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::json;
 use base64::Engine;
 
-use crate::{LeafHash, MerkleProof, ConsistencyProof};
+use crate::{LeafHash, InclusionProof, ConsistencyProof};
 
 // Type alias for our JSON responses
 type JsonResponse = Json<serde_json::Value>;
@@ -111,9 +111,9 @@ pub async fn get_inclusion_proof(
         Ok(true) => {
             // Get the index (safe because prove_inclusion succeeded)
             let index = tree.get_index(&query.hash).unwrap();
-            
-            // Create MerkleProof with all necessary data
-            let merkle_proof = MerkleProof {
+
+            // Create InclusionProof with all necessary data
+            let inclusion_proof = InclusionProof {
                 index,
                 proof_bytes: proof.as_bytes().iter().copied().collect(),
                 root: tree.root(),
@@ -122,7 +122,7 @@ pub async fn get_inclusion_proof(
 
             Json(json!({
                 "status": "ok",
-                "proof": merkle_proof
+                "proof": inclusion_proof
             }))
         },
         Ok(false) | Err(_) => Json(json!({

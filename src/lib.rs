@@ -1,8 +1,6 @@
-use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use ct_merkle::{HashableLeaf, RootHash};
-use ct_merkle::{InclusionProof, ConsistencyProof as CtConsistencyProof};
+use ct_merkle::{InclusionProof as CtInclusionProof, ConsistencyProof as CtConsistencyProof};
 use digest::{Update};
 use sha2::{Sha256, digest::Output};
 use serde::{Serialize, Deserialize};
@@ -92,9 +90,9 @@ impl ConsistencyProof {
     }
 }
 
-/// A wrapper around a merkle inclusion proof with all data needed for verification
+/// A wrapper around a merkle inclusion proof with metadata needed for external verification
 #[derive(Debug, Serialize, Deserialize)]
-pub struct MerkleProof {
+pub struct InclusionProof {
     /// The index of the leaf in the tree
     pub index: usize,
     /// The root hash at the time the proof was generated
@@ -106,7 +104,7 @@ pub struct MerkleProof {
     /// The total number of leaves in the tree at the time of proof generation
     pub tree_size: usize,
 }
-impl MerkleProof {
+impl InclusionProof {
     /// Verifies this proof against the given leaf hash using ct-merkle's proof verification
     pub fn verify(&self, hash: &[u8]) -> Result<bool> {
         // Create the leaf hash from the provided hash
@@ -126,7 +124,7 @@ impl MerkleProof {
         );
         
         // Create the inclusion proof from our stored bytes
-        let proof = InclusionProof::<Sha256>::from_bytes(self.proof_bytes.clone());
+        let proof = CtInclusionProof::<Sha256>::from_bytes(self.proof_bytes.clone());
         
         // Verify using root's verification method
         match root_hash.verify_inclusion(&leaf_hash, self.index as u64, &proof) {
@@ -218,68 +216,6 @@ impl LeafHash {
 impl HashableLeaf for LeafHash {
     fn hash<H: Update>(&self, hasher: &mut H) {
         hasher.update(&self.hash);
-    }
-}
-
-/// A thread-safe mapping of leaf hashes to their indices in the merkle tree.
-/// This allows O(1) lookup of proof indices without storing additional data.
-#[derive(Clone)]
-pub struct HashIndexMap {
-    map: Arc<RwLock<HashMap<Vec<u8>, usize>>>,
-}
-
-impl HashIndexMap {
-    /// Creates a new empty index map.
-    pub fn new() -> Self {
-        Self {
-            map: Arc::new(RwLock::new(HashMap::new())),
-        }
-    }
-
-    /// Records a mapping between a leaf hash and its index.
-    pub fn insert(&self, hash: Vec<u8>, index: usize) {
-        self.map.write().insert(hash, index);
-    }
-
-    /// Looks up the index for a leaf hash.
-    pub fn get(&self, hash: &[u8]) -> Option<usize> {
-        self.map.read().get(hash).copied()
-    }
-
-    /// Clears all mappings.
-    pub fn clear(&self) {
-        self.map.write().clear();
-    }
-}
-
-/// A thread-safe mapping of root hashes to their corresponding tree sizes.
-/// This allows finding the tree size for any historical root hash in O(1) time.
-#[derive(Clone)]
-pub struct RootMap {
-    map: Arc<RwLock<HashMap<Vec<u8>, usize>>>,
-}
-
-impl RootMap {
-    /// Creates a new empty root map.
-    pub fn new() -> Self {
-        Self {
-            map: Arc::new(RwLock::new(HashMap::new())),
-        }
-    }
-
-    /// Records a mapping between a root hash and its tree size.
-    pub fn insert(&self, root: Vec<u8>, size: usize) {
-        self.map.write().insert(root, size);
-    }
-
-    /// Looks up the tree size for a given root hash.
-    pub fn get_size(&self, root: &[u8]) -> Option<usize> {
-        self.map.read().get(root).copied()
-    }
-
-    /// Clears all mappings.
-    pub fn clear(&self) {
-        self.map.write().clear();
     }
 }
 

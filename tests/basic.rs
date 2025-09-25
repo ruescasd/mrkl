@@ -46,7 +46,7 @@ async fn test_inclusion_proofs() -> Result<()> {
         // Verify proof has correct root
         assert_eq!(proof.root, root, "Proof root should match current tree root for entry '{}'", entry);
         
-        // Verify the proof itself - now passing the hash
+        // Verify the proof itself
         assert!(proof.verify(hash)?, "Proof verification should succeed for entry '{}'", entry);
         
         println!("✅ Verified inclusion proof for '{}' at index {}", entry, proof.index);
@@ -160,7 +160,7 @@ async fn test_large_batch_performance() -> Result<()> {
     use sha2::{Digest, Sha256};
     
     let client = setup_client().await?;
-    let num_entries = 10_000; // A significant number of entries for meaningful measurements
+    let num_entries = 10_000;
     
     println!("🔥 Starting performance test with {} entries...", num_entries);
     
