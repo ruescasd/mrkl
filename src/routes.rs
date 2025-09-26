@@ -227,40 +227,4 @@ pub mod proof_bytes_format {
             .and_then(|string| BASE64.decode(string.as_bytes())
                 .map_err(|err| Error::custom(err.to_string())))
     }
-
-    pub mod optional {
-        use super::*;
-        use serde::{Serializer, Deserializer};
-
-        pub fn serialize<S>(bytes: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            match bytes {
-                Some(b) => super::serialize(b, serializer),
-                None => serializer.serialize_none()
-            }
-        }
-
-        pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            #[derive(Deserialize)]
-            #[serde(untagged)]
-            enum StringOrNull {
-                String(String),
-                Null,
-            }
-
-            match StringOrNull::deserialize(deserializer)? {
-                StringOrNull::String(s) => {
-                    BASE64.decode(s.as_bytes())
-                        .map(Some)
-                        .map_err(serde::de::Error::custom)
-                },
-                StringOrNull::Null => Ok(None),
-            }
-        }
-    }
 }
