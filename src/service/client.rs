@@ -1,10 +1,10 @@
+use crate::{ConsistencyProof, InclusionProof};
 use anyhow::Result;
+use base64::Engine;
 use reqwest::Client as HttpClient;
 use sha2::{Digest, Sha256};
-use tokio_postgres::{NoTls};
-use base64::Engine;
 use std::time::Duration;
-use crate::{InclusionProof, ConsistencyProof};
+use tokio_postgres::NoTls;
 
 pub struct Client {
     http_client: HttpClient,
@@ -28,8 +28,7 @@ impl Client {
             .build()?;
 
         // Set up database connection
-        let db_url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set in .env file");
+        let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env file");
         let (db_client, connection) = tokio_postgres::connect(&db_url, NoTls).await?;
 
         // Spawn the connection handler
@@ -54,7 +53,8 @@ impl Client {
         let hash_result = hasher.finalize();
 
         // Insert into database
-        let row = self.db_client
+        let row = self
+            .db_client
             .query_one(
                 "INSERT INTO append_only_log (data, leaf_hash) VALUES ($1, $2) RETURNING id",
                 &[&data, &hash_result.as_slice()],
@@ -66,7 +66,8 @@ impl Client {
 
     /// Gets the current merkle root
     pub async fn get_root(&self) -> Result<Vec<u8>> {
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&format!("{}/root", self.api_base_url))
             .send()
             .await?
@@ -77,7 +78,7 @@ impl Client {
         let root_b64 = response["merkle_root"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Invalid root response"))?;
-        
+
         // Decode base64 back to bytes
         let root_bytes = base64::engine::general_purpose::STANDARD.decode(root_b64)?;
 
@@ -91,20 +92,21 @@ impl Client {
         hasher.update(data.as_bytes());
         let hash_result = hasher.finalize();
 
-        let query = crate::InclusionQuery {
+        let query = crate::service::InclusionQuery {
             hash: hash_result.to_vec(),
         };
 
         // Make the request with the base64 encoded hash
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&format!("{}/proof", self.api_base_url))
             .query(&query)
             .send()
             .await?;
-            
+
         // Parse the response JSON into our MerkleProof struct
         let response = response.json::<serde_json::Value>().await?;
-        
+
         // Check for error response
         if response["status"].as_str() == Some("error") {
             return Err(anyhow::anyhow!(
@@ -112,7 +114,7 @@ impl Client {
                 response["error"].as_str().unwrap_or("unknown error")
             ));
         }
-        
+
         // Parse into our structured MerkleProof type
         let proof = serde_json::from_value(response["proof"].clone())?;
         Ok(proof)
@@ -120,16 +122,15 @@ impl Client {
 
     /// Gets a consistency proof proving that the current tree state is consistent with an older root hash
     pub async fn get_consistency_proof(&self, old_root: Vec<u8>) -> Result<ConsistencyProof> {
-        let query = crate::ConsistencyQuery {
-            old_root,
-        };
+        let query = crate::service::ConsistencyQuery { old_root };
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&format!("{}/consistency", self.api_base_url))
             .query(&query)
             .send()
             .await?;
-            
+
         // Parse the response JSON into our ConsistencyProof struct
         let response = response.json::<serde_json::Value>().await?;
 
@@ -140,7 +141,7 @@ impl Client {
                 response["error"].as_str().unwrap_or("unknown error")
             ));
         }
-        
+
         // Parse into our structured ConsistencyProof type
         let proof = serde_json::from_value(response["proof"].clone())?;
         Ok(proof)
@@ -148,26 +149,26 @@ impl Client {
 
     /// Verifies that the current tree state is consistent with a previously observed state.
     /// Returns true if the current tree is a descendant of old_root (i.e., old tree is a prefix).
-    pub async fn verify_tree_consistency(
-        &self,
-        old_root: Vec<u8>
-    ) -> Result<bool> {
+    pub async fn verify_tree_consistency(&self, old_root: Vec<u8>) -> Result<bool> {
         // Get consistency proof between the old root and current state
         let proof = self.get_consistency_proof(old_root).await?;
-        
+
         // Get current root to validate the proof matches current state
         let current_root = self.get_root().await?;
         if proof.new_root != current_root {
             return Ok(false);
         }
-        
+
         // Verify the proof cryptographically
-        proof.verify().map_err(|e| anyhow::anyhow!("Proof verification failed: {}", e))
+        proof
+            .verify()
+            .map_err(|e| anyhow::anyhow!("Proof verification failed: {}", e))
     }
 
     /// Rebuilds the merkle tree from scratch
     pub async fn trigger_rebuild(&self) -> Result<()> {
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&format!("{}/rebuild", self.api_base_url))
             .send()
             .await?
