@@ -1,38 +1,64 @@
 # Merkle Tree PostgreSQL Integration - TODO List
 
-## Project Overview
-This project implements a verifiable log using PostgreSQL, providing cryptographic proofs of data inclusion and ordering. The system uses batch processing with strong ordering guarantees to maintain a consistent Merkle tree state, enabling reliable proof generation while ensuring data consistency.
+## ✅ Completed
 
-## Current Status
-- ✅ Robust batch processing with strict ordering
-- ✅ Two-table design with strong consistency guarantees
-- ✅ High-performance batch inserts (~575K rows/sec)
-- ✅ Gap-free sequential processing
-- ✅ Basic Merkle tree implementation with ct-merkle
-- ✅ Advisory locks for concurrency control
-- ✅ Full ACID compliance and durability
+### Phase 0: Code Cleanup & Foundation
+- [x] Renamed tables for clarity (processed_log → merkle_log, append_only_log → source_log)
+- [x] Removed unused SQL objects (analyze_next_batch, processing_status, validate_processed_sequence)
+- [x] Added source_table column to merkle_log for multi-source tracking
+- [x] Changed source_log.id to BIGSERIAL for type consistency (all i64)
 
-## Planned Improvements
+### Phase 1: Single Log, Multiple Sources
+- [x] Implemented SourceConfig struct for configurable source tables
+- [x] Replaced PL/pgSQL process_next_batch() with Rust implementation
+- [x] Implemented batch processor that queries multiple source tables
+- [x] Merges rows by order column and inserts with sequential merkle_log IDs
+- [x] Implemented connection pooling (deadpool-postgres)
+- [x] Fixed all type conversions (consistent i64 throughout)
+- [x] **Created verification_sources configuration table**
+- [x] **Dynamic source loading on every batch iteration**
+- [x] **All-or-nothing validation of configured tables**
+- [x] **Automated multi-source testing infrastructure**
+- [x] All tests passing
 
-### 1. Multi-Source Verification System
-- [ ] Add source table identifier to processed_log
-- [ ] Implement generic source table interface
-- [ ] Add support for multiple concurrent source tables
-- [ ] Create example with multiple event sources
+**Phase 1 Complete!** ✨
 
-### 2. Operational Improvements
-- [ ] Implement proper error handling and recovery
-- [ ] Add structured logging
-- [ ] Create monitoring dashboards
-- [ ] Add performance metrics collection
-- [ ] Implement health checks
+## 🚧 Next Steps
 
-### Multi-Source Design Considerations
-- Source tables need only:
-  - Ordering guarantee (timestamp or sequence)
-  - Hash computation capability
-- processed_log focuses on verification:
-  - Sequential IDs
-  - Source reference
-  - Hash storage
-  - No data duplication
+### Phase 2: Multiple Independent Logs
+**Goal**: Support multiple independent merkle trees, each tracking different sets of source tables
+
+**Design Questions**:
+- [ ] How to identify which log a source belongs to? (log_name column? separate config table?)
+- [ ] One merkle_state per log in AppState?
+- [ ] Separate HTTP endpoints per log? (/logs/{log_name}/root, etc.)
+- [ ] How to configure log definitions? (config file? database table?)
+
+**Implementation Tasks**:
+- [ ] Design configuration mechanism for log definitions
+- [ ] Extend schema to support multiple logs
+- [ ] Update batch processor to handle multiple independent logs
+- [ ] Update routes to support log-scoped operations
+- [ ] Add tests for multi-log scenarios
+
+### Phase 3: Production Readiness
+- [ ] Configuration file/database for source and log definitions
+- [ ] Graceful shutdown handling
+- [ ] Metrics/monitoring endpoints
+- [ ] Performance tuning (batch sizes, intervals)
+- [ ] Documentation for deployment
+- [ ] Handle empty root case when merkle tree is empty (See routes::get_merkle_root)
+
+## 📝 Design Notes
+
+**Current Architecture**:
+- Single merkle_log table stores entries from multiple source tables
+- source_table + source_id provides unique identification
+- Sequential merkle_log.id maintains global ordering
+- In-memory merkle tree rebuilt on startup from merkle_log
+- Batch processor runs every 1 second, processes up to 10k rows
+
+**Key Invariants**:
+1. No gaps in merkle_log.id sequence
+2. Tree only updated from committed merkle_log data
+3. merkle_log is ground truth (always rebuildable)

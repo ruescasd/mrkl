@@ -27,114 +27,52 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
         client
             .batch_execute(
                 r#"
-            DROP FUNCTION IF EXISTS process_next_batch(INT);
             DROP TABLE IF EXISTS merkle_log;
-            DROP TABLE IF EXISTS source_log;
         "#,
             )
             .await?;
         println!("✅ Existing objects dropped.");
     }
 
-    // 1. Create the append-only source table
+    // 1. Create the verification sources configuration table
     client
         .batch_execute(
             r#"
-        CREATE TABLE IF NOT EXISTS source_log (
-            id          SERIAL PRIMARY KEY,
-            data        TEXT NOT NULL,
-            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            leaf_hash   BYTEA NOT NULL
+        CREATE TABLE IF NOT EXISTS verification_sources (
+            id SERIAL PRIMARY KEY,
+            source_table TEXT NOT NULL,
+            hash_column TEXT NOT NULL,
+            order_column TEXT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT true,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE(source_table)
         );
     "#,
         )
         .await?;
-    println!("✅ Table 'source_log' is ready.");
+    println!("✅ Table 'verification_sources' is ready.");
 
-    // 2. Create the merkle log table with strict controls - Now without data column
+    // 2. Create the merkle log table with strict controls - supports multiple sources
     client
         .batch_execute(
             r#"
         CREATE TABLE IF NOT EXISTS merkle_log (
             id BIGINT PRIMARY KEY,
+            source_table TEXT NOT NULL,
             source_id BIGINT NOT NULL,
             leaf_hash BYTEA NOT NULL,
             processed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             CONSTRAINT merkle_log_immutable CHECK (processed_at = processed_at)
         );
 
-        -- Index on source_id for lookups and duplicate prevention
-        CREATE UNIQUE INDEX merkle_log_source_idx ON merkle_log(source_id);
+        -- Index on (source_table, source_id) for lookups and duplicate prevention across sources
+        CREATE UNIQUE INDEX merkle_log_source_idx ON merkle_log(source_table, source_id);
         -- Index on leaf_hash for proof generation
         CREATE INDEX merkle_log_hash_idx ON merkle_log(leaf_hash);
     "#,
         )
         .await?;
     println!("✅ Table 'merkle_log' is ready.");
-
-    // 3. Create the processing function
-    client
-        .batch_execute(
-            r#"
-        CREATE OR REPLACE FUNCTION process_next_batch(
-            batch_size INT DEFAULT 10000
-        ) RETURNS TABLE (
-            rows_processed BIGINT,
-            first_id BIGINT,
-            last_id BIGINT
-        ) LANGUAGE plpgsql AS $$
-        DECLARE
-            next_id BIGINT;
-            last_processed_source_id BIGINT;
-            rows_affected BIGINT;
-            batch_first_id BIGINT;
-            batch_last_id BIGINT;
-        BEGIN
-            -- Get an advisory lock to ensure only one process runs at a time
-            IF NOT pg_try_advisory_xact_lock(hashtext('process_next_batch')) THEN
-                RAISE EXCEPTION 'Another processing batch is running';
-            END IF;
-
-            -- Find our starting points
-            SELECT COALESCE(MAX(id), 0) + 1 INTO next_id FROM merkle_log;
-            SELECT COALESCE(MAX(source_id), 0) INTO last_processed_source_id FROM merkle_log;
-
-            -- Start a CTE for atomic processing
-            WITH source_rows AS (
-                -- Select unprocessed rows using index scan
-                SELECT
-                    al.id as source_id,
-                    al.leaf_hash,
-                    al.id - last_processed_source_id as row_offset
-                FROM source_log al
-                WHERE al.id > last_processed_source_id
-                ORDER BY al.id
-                LIMIT batch_size
-            ),
-            inserted AS (
-                -- Insert rows with sequential IDs based on row_offset (no data column)
-                INSERT INTO merkle_log (id, source_id, leaf_hash)
-                SELECT
-                    next_id + row_offset - 1,
-                    source_id,
-                    leaf_hash
-                FROM source_rows
-                -- Return information about the inserted rows
-                RETURNING id
-            )
-            -- Capture batch statistics
-            SELECT COUNT(*), MIN(id), MAX(id)
-            INTO rows_affected, batch_first_id, batch_last_id
-            FROM inserted;
-
-            -- Return batch processing results
-            RETURN QUERY SELECT rows_affected, batch_first_id, batch_last_id;
-        END;
-        $$;
-    "#,
-        )
-        .await?;
-    println!("✅ Function 'process_next_batch' is ready.");
 
     Ok(())
 }

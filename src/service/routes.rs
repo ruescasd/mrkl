@@ -26,13 +26,18 @@ pub struct ConsistencyQuery {
 }
 
 // Fetches all entries from the database to rebuild the merkle tree
+// Note: merkle_log may contain entries from multiple source tables,
+// but the tree only cares about sequential ordering by id and the leaf hashes
 pub async fn fetch_all_entries(
-    client: &tokio_postgres::Client,
-) -> Result<(Vec<LeafHash>, Vec<(Vec<u8>, usize)>, i64), tokio_postgres::Error> {
+    db_pool: &deadpool_postgres::Pool,
+) -> Result<(Vec<LeafHash>, Vec<(Vec<u8>, usize)>, i64), anyhow::Error> {
     println!("🔄 Fetching all entries from database...");
 
+    // Get connection from pool
+    let conn = db_pool.get().await?;
+
     // Query all rows from merkle_log which guarantees sequential order
-    let rows = client
+    let rows = conn
         .query(
             "SELECT pl.id, pl.leaf_hash
              FROM merkle_log pl
@@ -63,6 +68,12 @@ pub async fn fetch_all_entries(
 // Handler for the /root endpoint
 pub async fn get_merkle_root(State(state): State<AppState>) -> JsonResponse {
     let merkle_state = state.merkle_state.read();
+    if merkle_state.tree.len() == 0 {
+        return Json(json!({
+            "status": "error",
+            "error": "Merkle tree is empty"
+        }));
+    }
     let root = merkle_state.tree.root();
     Json(json!({
         "merkle_root": base64::engine::general_purpose::STANDARD.encode(&root),
@@ -178,7 +189,7 @@ pub async fn get_consistency_proof(
         Err(e) => {
             return Json(json!({
                 "status": "error",
-                "error": format!("Failed to generate consistency proof: {:?}", e)
+                "error": format!("Failed to generate consistency proof: ProofError: {:?}", e)
             }));
         }
     };
@@ -239,7 +250,7 @@ pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>, i
 
     // Measure database fetch time
     let fetch_start = std::time::Instant::now();
-    let (leaf_hashes, _s, last_id) = fetch_all_entries(&state.client).await?;
+    let (leaf_hashes, _s, last_id) = fetch_all_entries(&state.db_pool).await?;
     let fetch_time = fetch_start.elapsed();
     println!(
         "📥 Database fetch completed in {}ms",

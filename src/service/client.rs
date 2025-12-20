@@ -45,25 +45,6 @@ impl Client {
         })
     }
 
-    /// Adds a new entry to the log through the database
-    pub async fn add_entry(&self, data: &str) -> Result<i32> {
-        // First compute the hash
-        let mut hasher = Sha256::new();
-        hasher.update(data.as_bytes());
-        let hash_result = hasher.finalize();
-
-        // Insert into database
-        let row = self
-            .db_client
-            .query_one(
-                "INSERT INTO source_log (data, leaf_hash) VALUES ($1, $2) RETURNING id",
-                &[&data, &hash_result.as_slice()],
-            )
-            .await?;
-
-        Ok(row.get(0))
-    }
-
     /// Gets the current merkle root
     pub async fn get_root(&self) -> Result<Vec<u8>> {
         let response = self
@@ -73,6 +54,14 @@ impl Client {
             .await?
             .json::<serde_json::Value>()
             .await?;
+
+        // Check for error response
+        if response["status"].as_str() == Some("error") {
+            return Err(anyhow::anyhow!(
+                "Error getting proof: {}",
+                response["error"].as_str().unwrap_or("unknown error")
+            ));
+        }
 
         // Parse the base64 encoded root from the response
         let root_b64 = response["merkle_root"]
@@ -183,5 +172,97 @@ impl Client {
         }
 
         Ok(())
+    }
+
+    /// Utilities for interacting with the database directly for testing
+    
+    /// Adds a new entry to the log through the database
+    pub async fn add_entry(&self, data: &str) -> Result<i64> {
+        // First compute the hash
+        let mut hasher = Sha256::new();
+        hasher.update(data.as_bytes());
+        let hash_result = hasher.finalize();
+
+        // Insert into database
+        let row = self
+            .db_client
+            .query_one(
+                "INSERT INTO source_log (data, leaf_hash) VALUES ($1, $2) RETURNING id",
+                &[&data, &hash_result.as_slice()],
+            )
+            .await?;
+
+        Ok(row.get(0))
+    }
+
+    /// Creates and registers test source tables for verification
+    pub async fn setup_and_register_sources(&self, table_names: &[&str]) -> Result<()> {
+        // Clear any existing source configurations to ensure clean test state
+        self.db_client
+            .execute("DELETE FROM verification_sources", &[])
+            .await?;
+        
+        for table_name in table_names {
+            // Create table
+            self.db_client
+                .batch_execute(&format!(
+                    r#"
+                    CREATE TABLE IF NOT EXISTS {} (
+                        id          BIGSERIAL PRIMARY KEY,
+                        data        TEXT NOT NULL,
+                        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        leaf_hash   BYTEA NOT NULL
+                    );
+                    "#,
+                    table_name
+                ))
+                .await?;
+            
+            // Register in verification_sources
+            self.db_client
+                .execute(
+                    "INSERT INTO verification_sources (source_table, hash_column, order_column) VALUES ($1, $2, $3)",
+                    &[table_name, &"leaf_hash", &"id"],
+                )
+                .await?;
+            
+            println!("✅ Created and registered '{}'", table_name);
+        }
+        Ok(())
+    }
+
+    pub async fn add_entry_to_source(
+        &self,
+        table_name: &str,
+        data: &str,
+    ) -> Result<i64> {
+        use sha2::{Digest, Sha256};
+        
+        let mut hasher = Sha256::new();
+        hasher.update(data.as_bytes());
+        let hash_result = hasher.finalize();
+
+        let row = self.db_client
+            .query_one(
+                &format!(
+                    "INSERT INTO {} (data, leaf_hash) VALUES ($1, $2) RETURNING id",
+                    table_name
+                ),
+                &[&data, &hash_result.as_slice()],
+            )
+            .await?;
+
+        Ok(row.get(0))
+    }
+
+    pub async fn get_sources(&self) -> Result<Vec<tokio_postgres::Row>> {
+        let result = self.db_client
+        .query(
+            "SELECT source_table, source_id, id FROM merkle_log ORDER BY id",
+            &[],
+        )
+        .await?;
+
+        Ok(result)
     }
 }

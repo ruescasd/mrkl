@@ -14,7 +14,9 @@ async fn setup_client() -> Result<Client> {
 #[serial]
 #[tokio::test]
 async fn test_inclusion_proofs() -> Result<()> {
+
     let client = setup_client().await?;
+    client.setup_and_register_sources(&["source_log"]).await?;
 
     use sha2::{Digest, Sha256};
 
@@ -72,6 +74,7 @@ async fn test_inclusion_proofs() -> Result<()> {
 #[tokio::test]
 async fn test_consistency_proofs() -> Result<()> {
     let client = setup_client().await?;
+    client.setup_and_register_sources(&["source_log"]).await?;
     let mut historical_roots = Vec::new();
 
     // Add entries and store intermediate roots
@@ -85,7 +88,8 @@ async fn test_consistency_proofs() -> Result<()> {
 
             // Wait for this single entry to be processed
             println!("Waiting for entry {}-{} to be processed...", i + 1, j + 1);
-
+            client.wait_for_processing().await?;
+            
             // Store root after each entry
             let root = client.get_root().await?;
             println!(
@@ -134,9 +138,11 @@ async fn test_consistency_proofs() -> Result<()> {
 #[serial]
 #[tokio::test]
 async fn test_burst_operations() -> Result<()> {
+
     use sha2::{Digest, Sha256};
 
     let client = setup_client().await?;
+    client.setup_and_register_sources(&["source_log"]).await?;
 
     // Create a batch of entries and calculate their hashes
     let entries: Vec<String> = (1..=10).map(|i| format!("burst-entry-{}", i)).collect();
@@ -191,6 +197,7 @@ async fn test_large_batch_performance() -> Result<()> {
     use sha2::{Digest, Sha256};
 
     let client = setup_client().await?;
+    client.setup_and_register_sources(&["source_log"]).await?;
     let num_entries = 10_000;
 
     println!(
@@ -269,5 +276,66 @@ async fn test_large_batch_performance() -> Result<()> {
         println!("✅ Verified entry at index {}", idx);
     }
 
+    Ok(())
+}
+
+#[ignore]
+#[serial]
+#[tokio::test]
+async fn test_source_log_setup() -> Result<()> {
+
+    // Create and register all test sources
+    let all_sources = ["source_log", "test_source_a", "test_source_b"];
+    let client = setup_client().await?;
+    client.setup_and_register_sources(&all_sources).await?;
+
+    // Add entries to all three sources with interleaved timing
+    println!("\n📝 Adding entries to multiple sources...");
+    client.add_entry_to_source("source_log", "entry-s-1").await?;
+    client.add_entry_to_source("test_source_a", "entry-a-1").await?;
+    client.add_entry_to_source("test_source_b", "entry-b-1").await?;
+    client.add_entry_to_source("source_log", "entry-s-2").await?;
+    client.add_entry_to_source("test_source_a", "entry-a-2").await?;
+    println!("✅ Added 5 entries across 3 source tables");
+
+    // Wait for batch processor
+    println!("\n⏳ Waiting for batch processor (3 seconds)...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+    // Verify entries were processed into merkle_log from all sources
+    let rows = client.get_sources().await?;
+
+    println!("\n📊 Processed entries in merkle_log:");
+    for row in &rows {
+        let source_table: String = row.get(0);
+        let source_id: i64 = row.get(1);
+        let merkle_id: i64 = row.get(2);
+        println!("  merkle_id={}, source={}:{}", merkle_id, source_table, source_id);
+    }
+
+    assert!(rows.len() >= 5, "Should have processed at least 5 entries");
+    
+    // Verify sequential merkle_log IDs
+    let expected_start = if rows.len() > 5 { rows.len() - 5 } else { 0 };
+    for (idx, row) in rows.iter().skip(expected_start).enumerate() {
+        let merkle_id: i64 = row.get(2);
+        assert_eq!(
+            merkle_id,
+            (expected_start + idx + 1) as i64,
+            "Merkle log IDs should be sequential"
+        );
+    }
+    
+    println!("\n✅ Multi-source test complete!");
+    println!("   - {} total entries in merkle_log", rows.len());
+    println!("   - Entries from {} different sources", 
+        rows.iter()
+            .map(|r| r.get::<_, String>(0))
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    );
+    println!("   - Sequential merkle_log IDs verified");
+    println!("   - Phase 1 validation: SUCCESS! ✨");
+    
     Ok(())
 }
