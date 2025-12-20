@@ -57,7 +57,7 @@
 - [ ] Metrics/monitoring endpoints
 - [ ] Performance tuning (batch sizes, intervals)
 - [ ] Documentation for deployment
-- [ ] Handle empty root case when merkle tree is empty (See routes::get_merkle_root)
+- [ ] Handle empty root case when merkle tree is empty (See routes::get_merkle_root), should we add a the empty root at index 0 in root_maps?
 
 ## 📝 Design Notes
 

@@ -109,13 +109,6 @@ impl CtMerkleTree {
         self.root_map.get(root).copied()
     }
 
-    /// Clears all data from the tree and associated maps
-    pub fn clear(&mut self) {
-        self.tree = MemoryBackedTree::new();
-        self.index_map.clear();
-        self.root_map.clear();
-    }
-
     /// Returns a tree corresponding to the historical state at the given root hash.
     pub(crate) fn rewind(
         &self,

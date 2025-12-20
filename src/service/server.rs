@@ -65,11 +65,6 @@ pub async fn run_server(app_state: AppState) -> Result<()> {
     // Clone the state for the processing task
     let process_state = app_state.clone();
 
-    // Spawn the batch processing task
-    let processor = tokio::spawn(async move {
-        crate::service::processor::run_batch_processor(process_state).await;
-    });
-
     // Do initial rebuild of the tree now that connection is established
     println!("Performing initial tree rebuild...");
     match crate::service::routes::rebuild_tree(&app_state).await {
@@ -81,6 +76,11 @@ pub async fn run_server(app_state: AppState) -> Result<()> {
         }
         Err(e) => println!("⚠️ Failed to perform initial rebuild: {}", e),
     }
+    
+    // Spawn the batch processing task
+    let processor = tokio::spawn(async move {
+        crate::service::processor::run_batch_processor(process_state).await;
+    });
 
     // Create the server
     let app = create_server(app_state);
