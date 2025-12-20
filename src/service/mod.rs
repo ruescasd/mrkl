@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 pub mod client;
+pub mod processor;
 pub mod routes;
 pub mod server;
 pub mod state;

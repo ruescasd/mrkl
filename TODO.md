@@ -42,6 +42,16 @@
 - [ ] Add tests for multi-log scenarios
 
 ### Phase 3: Production Readiness
+
+**Critical Issues**:
+- [ ] **Fix multi-source ordering**: Current implementation sorts by source table ID, which is meaningless across tables
+  - Problem: Table A with IDs 1-10,000 will always come after Table B with IDs 1-5
+  - Solution: Make `SourceRow` generic over ordering key (e.g., `SourceRow<T: Ord>`)
+  - Allow sorting by cross-table comparable values (timestamps, global sequence numbers)
+  - Update SourceConfig to specify ordering column type/strategy
+  - Keep same `sort_by_key` logic with generic ordering value
+
+**Other Tasks**:
 - [ ] Configuration file/database for source and log definitions
 - [ ] Graceful shutdown handling
 - [ ] Metrics/monitoring endpoints
