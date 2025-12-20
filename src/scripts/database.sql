@@ -1,4 +1,5 @@
 -- psql -U postgres -f .\src\scripts\database.sql
+DROP DATABASE merkle_db;
 CREATE DATABASE merkle_db;
 CREATE USER "user" WITH PASSWORD 'user';
 GRANT ALL PRIVILEGES ON DATABASE merkle_db TO "user";

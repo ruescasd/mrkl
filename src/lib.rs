@@ -11,7 +11,7 @@ pub mod tree;
 
 // Re-export service layer components
 pub use service::{
-    AppState, Client, ConsistencyQuery, InclusionQuery, MerkleState, fetch_all_entries,
+    AppState, ConsistencyQuery, InclusionQuery, MerkleState, fetch_all_entries,
     get_consistency_proof, get_inclusion_proof, get_merkle_root, trigger_rebuild,
 };
 

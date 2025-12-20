@@ -56,7 +56,7 @@ impl Client {
         let row = self
             .db_client
             .query_one(
-                "INSERT INTO append_only_log (data, leaf_hash) VALUES ($1, $2) RETURNING id",
+                "INSERT INTO source_log (data, leaf_hash) VALUES ($1, $2) RETURNING id",
                 &[&data, &hash_result.as_slice()],
             )
             .await?;

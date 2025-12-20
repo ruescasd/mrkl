@@ -38,7 +38,7 @@ pub async fn run_batch_processor(app_state: AppState) {
     let interval = std::time::Duration::from_secs(1);
 
     loop {
-        // Time the batch processing (movement from append_only_log to processed_log)
+        // Time the batch processing (movement from source_log to merkle_log)
         let batch_start = std::time::Instant::now();
 
         // Get the current merkle state and last processed ID
@@ -55,7 +55,7 @@ pub async fn run_batch_processor(app_state: AppState) {
             Ok(row) => {
                 let rows_processed: i64 = row.get("rows_processed");
                 if rows_processed > 0 {
-                    // Time the retrieval from processed_log
+                    // Time the retrieval from merkle_log
                     let fetch_start = std::time::Instant::now();
 
                     // Query everything after our last known processed ID
@@ -63,7 +63,7 @@ pub async fn run_batch_processor(app_state: AppState) {
                         .client
                         .query(
                             "SELECT id, leaf_hash
-                             FROM processed_log
+                             FROM merkle_log
                              WHERE id > $1
                              ORDER BY id",
                             &[&current_last_id],

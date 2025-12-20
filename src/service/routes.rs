@@ -31,11 +31,11 @@ pub async fn fetch_all_entries(
 ) -> Result<(Vec<LeafHash>, Vec<(Vec<u8>, usize)>, i64), tokio_postgres::Error> {
     println!("🔄 Fetching all entries from database...");
 
-    // Query all rows from processed_log which guarantees sequential order
+    // Query all rows from merkle_log which guarantees sequential order
     let rows = client
         .query(
             "SELECT pl.id, pl.leaf_hash
-             FROM processed_log pl
+             FROM merkle_log pl
              ORDER BY pl.id",
             &[],
         )
