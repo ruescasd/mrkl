@@ -20,74 +20,73 @@ pub async fn run_batch_processor(app_state: AppState) {
     let interval = std::time::Duration::from_secs(1);
 
     loop {
-        // Time the batch processing (movement from source tables to merkle_log)
+        // Time the copy from source tables to merkle_log
         let batch_start = std::time::Instant::now();
 
         // Get the current merkle state and last processed ID
         let current_last_id = app_state.merkle_state.read().last_processed_id;
 
-        // Process batch using Rust implementation
-        let batch_result = process_batch_rust(&app_state, batch_size).await;
+        // Copy pending entries into merkle_log
+        let batch_result = copy_source_rows(&app_state, batch_size).await;
 
         let batch_duration = batch_start.elapsed();
 
-        match batch_result {
-            Ok(rows_copied) => {
-                if rows_copied > 0 {
-                    // Time the retrieval from merkle_log
-                    let fetch_start = std::time::Instant::now();
-
-                    // Query everything after our last known processed ID
-                    let conn = app_state.db_pool.get().await.expect("Failed to get connection");
-                    let fetch_result = conn
-                        .query(
-                            "SELECT id, leaf_hash
-                             FROM merkle_log
-                             WHERE id > $1
-                             ORDER BY id",
-                            &[&current_last_id],
-                        )
-                        .await;
-
-                    let fetch_duration = fetch_start.elapsed();
-
-                    match fetch_result {
-                        Ok(rows) => {
-                            let leaves_added = rows.len();
-                            // Start timing the tree construction
-                            let tree_start = std::time::Instant::now();
-
-                            // Update the merkle state and maps
-                            let mut merkle_state = app_state.merkle_state.write();
-
-                            for row in rows {
-                                let id: i64 = row.get("id");
-                                let hash: Vec<u8> = row.get("leaf_hash");
-                                let leaf_hash = LeafHash::new(hash);
-
-                                // Update tree and ID atomically
-                                merkle_state.update_with_entry(leaf_hash, id);
-                            }
-
-                            let tree_duration = tree_start.elapsed();
-
-                            // Log timing information
-                            println!("Batch stats:");
-                            println!("  Rows copied: {}", rows_copied);
-                            println!("  Leaves added: {}, last processed ID: {}", leaves_added, merkle_state.last_processed_id);
-                            println!("  Batch processing time: {:?}", batch_duration);
-                            println!("  Fetch from merkle_log time: {:?}", fetch_duration);
-                            println!("  Tree construction time: {:?}", tree_duration);
-                        }
-                        Err(e) => println!("⚠️ Error fetching processed rows: {}", e),
-                    }
-                }
+        let Ok(rows_copied) = batch_result else {
+            let err = batch_result.err().unwrap();
+            if !err.to_string().contains("Another processing batch is running") {
+                println!("⚠️ Error processing batch: {}", err);
             }
-            Err(e) => {
-                if !e.to_string().contains("Another processing batch is running") {
-                    println!("⚠️ Error processing batch: {}", e);
-                }
+            continue;
+        };
+
+        if rows_copied > 0 {
+            // Time the retrieval from merkle_log
+            let fetch_start = std::time::Instant::now();
+
+            // Query everything after our last known processed ID
+            let conn = app_state.db_pool.get().await.expect("Failed to get connection");
+            let fetch_result = conn
+                .query(
+                    "SELECT id, leaf_hash
+                        FROM merkle_log
+                        WHERE id > $1
+                        ORDER BY id",
+                    &[&current_last_id],
+                )
+                .await;
+
+            let fetch_duration = fetch_start.elapsed();
+
+            let Ok(rows) = fetch_result else {
+                println!("⚠️ Error fetching processed rows: {}", fetch_result.err().unwrap());
+                continue;
+            };
+
+            let leaves_added = rows.len();
+            // Start timing the tree construction
+            let tree_start = std::time::Instant::now();
+
+            // Update the merkle state and maps
+            let mut merkle_state = app_state.merkle_state.write();
+
+            for row in rows {
+                let id: i64 = row.get("id");
+                let hash: Vec<u8> = row.get("leaf_hash");
+                let leaf_hash = LeafHash::new(hash);
+
+                // Update tree and ID atomically
+                merkle_state.update_with_entry(leaf_hash, id);
             }
+
+            let tree_duration = tree_start.elapsed();
+
+            // Log timing information
+            println!("Batch stats:");
+            println!("  Rows copied: {}", rows_copied);
+            println!("  Leaves added: {}, last processed ID: {}", leaves_added, merkle_state.last_processed_id);
+            println!("  Batch processing time: {:?}", batch_duration);
+            println!("  Fetch from merkle_log time: {:?}", fetch_duration);
+            println!("  Tree construction time: {:?}", tree_duration);
         }
 
         // Wait for next interval
@@ -146,7 +145,7 @@ async fn validate_source_tables(conn: &PooledConnection, configs: &[SourceConfig
 
 /// Process a batch of rows from configured source tables into merkle_log
 /// Returns the number of rows processed
-async fn process_batch_rust(app_state: &AppState, batch_size: i64) -> Result<i64> {
+async fn copy_source_rows(app_state: &AppState, batch_size: i64) -> Result<i64> {
     // Get connection from pool
     let mut conn = app_state.db_pool.get().await?;
 
@@ -166,7 +165,7 @@ async fn process_batch_rust(app_state: &AppState, batch_size: i64) -> Result<i64
         return Ok(0);
     }
     
-    // Start transaction (now works because conn is owned, not shared via Arc)
+    // Start transaction
     let txn = conn.transaction().await?;
 
     // Advisory lock prevents concurrent execution (defensive for multi-instance deployments)
