@@ -23,19 +23,28 @@ pub struct SourceConfig {
     pub table_name: String,
     /// The column containing the pre-computed hash value
     pub hash_column: String,
-    /// The column used for ordering (e.g., "id", "created_at")
-    pub order_column: String,
+    /// The unique ID column (must be unique per table, e.g., primary key)
+    pub id_column: String,
+    /// Optional timestamp column for chronological ordering across tables
+    pub timestamp_column: Option<String>,
     /// The log this source belongs to
     pub log_name: String,
 }
 
 impl SourceConfig {
     /// Creates a new source configuration
-    pub fn new(table_name: impl Into<String>, hash_column: impl Into<String>, order_column: impl Into<String>, log_name: impl Into<String>) -> Self {
+    pub fn new(
+        table_name: impl Into<String>, 
+        hash_column: impl Into<String>, 
+        id_column: impl Into<String>, 
+        timestamp_column: Option<String>,
+        log_name: impl Into<String>
+    ) -> Self {
         Self {
             table_name: table_name.into(),
             hash_column: hash_column.into(),
-            order_column: order_column.into(),
+            id_column: id_column.into(),
+            timestamp_column,
             log_name: log_name.into(),
         }
     }

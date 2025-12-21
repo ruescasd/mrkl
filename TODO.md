@@ -50,21 +50,32 @@
 - Processor and HTTP server share only DashMap (designed for concurrent access)
 - No database contention from HTTP requests (memory-only operations)
 
+### Phase 3: Universal Ordering System
+**Goal**: Implement robust chronological ordering across multiple sources with different schemas
+
+**Implementation Complete**:
+- [x] Schema updates: Renamed order_column → id_column (must be unique per table)
+- [x] Added optional timestamp_column to verification_sources
+- [x] Universal ordering key: (Option<DateTime<Utc>>, i64, String)
+- [x] Custom Ord implementation for SourceRow with explicit ordering logic:
+  1. Timestamped entries sort before non-timestamped (Some < None)
+  2. Within timestamped: chronological order by timestamp
+  3. Secondary sort by source_id (unique per table)
+  4. Tertiary sort by source_table (deterministic tie-breaker)
+- [x] BTreeSet for O(log n) automatic sorted insertion
+- [x] Conditional SQL queries based on timestamp_column presence
+- [x] Test infrastructure for mixed timestamped/non-timestamped sources
+- [x] Comprehensive ordering tests: test_universal_ordering and test_no_timestamp_ordering
+- [x] Backward compatible: sources without timestamps gracefully degrade to ID-based ordering
+- [x] All tests passing with verification of chronological and ID-based ordering
+
+**Phase 3 Complete!** ✨
+
 ## 🚧 Next Steps
 
-### Phase 3: Production Readiness
+### Phase 4: Production Readiness
 
 **Critical Issues**:
-- [ ] **Fix multi-source ordering**: Current implementation sorts by source table ID, which is meaningless across tables
-  - Problem: Table A with IDs 1-10,000 will always come after Table B with IDs 1-5
-  - Current: Uses `order_value` from source table's order column (e.g., id, created_at)
-  - Issue: Different tables may use different value ranges/types
-  - Solution options:
-    1. Require all source tables to use same ordering scheme (e.g., all timestamps)
-    2. Make ordering column configurable per-source with type information
-    3. Use composite sort key: (order_value, source_table, source_id) - current implementation
-  - **Current implementation uses composite key which provides deterministic ordering**
-  - Need to validate: Does this meet real-world requirements? Or do we need timestamp-based ordering?
 
 **Infrastructure Tasks**:
 - [ ] Error handling: What happens when source table doesn't exist or has wrong schema?
@@ -74,6 +85,7 @@
 - [ ] Log management API: Create/disable logs without database access
 - [ ] Performance tuning: Configurable batch sizes and intervals per log
 - [ ] Handle empty root case when merkle tree is empty (See routes::get_merkle_root)
+- [ ] ct-merkle expects data to be passed in which will be hashed, but we want to pass already computed hashes, the current implementation will be hashing our supplied hashes again
 
 **Documentation**:
 - [ ] Deployment guide (environment variables, database setup)
@@ -86,7 +98,7 @@
 - [ ] Error recovery scenarios (database disconnect, invalid source tables)
 - [ ] Large dataset tests (millions of entries per log)
 
-**Future Enhancements** (Post-Phase 3):
+**Future Enhancements** (Post-Phase 4):
 - [ ] Pruning old entries (if needed)
 - [ ] Read replicas for HTTP layer
 - [ ] Async proof generation for large trees
@@ -98,12 +110,15 @@
 - Multiple independent logs, each with their own merkle tree
 - verification_logs table defines available logs (log_name, enabled flag)
 - verification_sources maps source tables to logs (composite PK: source_table, log_name)
+  - id_column (required): Must be unique per table for ordering guarantees
+  - timestamp_column (optional): Enables chronological ordering
 - merkle_log stores entries with log_name FK (CASCADE delete when log removed)
 - DashMap<String, Arc<RwLock<MerkleState>>> provides concurrent per-log state
 - Startup rebuild ensures in-memory trees match database before serving requests
 - Batch processor: sole owner of all database operations (clean separation)
 - HTTP handlers: memory-only operations, read from DashMap (fast, no DB contention)
 - Sequential global merkle_log.id (SERIAL) - monotonic per log with gaps
+- Universal ordering: (Option<Timestamp>, id, table_name) provides chronological ordering with graceful degradation
 
 **Key Invariants**:
 1. No gaps in merkle_log.id sequence **globally** (per-log may have gaps from other logs)
@@ -111,11 +126,14 @@
 3. merkle_log is ground truth (always rebuildable)
 4. Batch processor holds advisory lock per log during processing
 5. All database writes happen in batch processor only
+6. id_column must be unique per source table (typically primary key or unique constraint)
 
 **Ordering Strategy**:
-- Composite sort key: (order_value, source_table, source_id)
-- order_value: value from source table's order column (configurable per source)
-- source_table: ensures deterministic ordering when order_values collide
-- source_id: tie-breaker within same source table
-- This provides deterministic, repeatable ordering across multiple sources
-- Limitation: May not match wall-clock time if sources use different ordering schemes
+- Universal ordering key: (Option<DateTime<Utc>>, source_id, source_table)
+- Timestamped sources: Chronological ordering by timestamp column (e.g., created_at)
+- Non-timestamped sources: Sort after all timestamped entries, ordered by (id, table_name)
+- Custom Ord implementation provides type-safe, compile-time verified ordering
+- BTreeSet ensures O(log n) sorted insertion with automatic deduplication
+- Conditional SQL queries: includes timestamp column only when configured
+- Backward compatible: Optional timestamp column allows mixed timestamped/non-timestamped scenarios
+- Deterministic and repeatable: Same database state always produces same tree

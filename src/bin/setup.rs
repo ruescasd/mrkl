@@ -59,7 +59,8 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
             source_table TEXT NOT NULL,
             log_name TEXT NOT NULL REFERENCES verification_logs(log_name) ON DELETE CASCADE,
             hash_column TEXT NOT NULL,
-            order_column TEXT NOT NULL,
+            id_column TEXT NOT NULL,
+            timestamp_column TEXT,
             enabled BOOLEAN NOT NULL DEFAULT true,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (source_table, log_name)

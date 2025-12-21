@@ -10,7 +10,6 @@ pub struct Client {
     http_client: HttpClient,
     db_client: tokio_postgres::Client,
     api_base_url: String,
-    default_log_name: String,
 }
 
 impl Client {
@@ -22,10 +21,10 @@ impl Client {
     }
 
     /// Gets the current size (number of entries) of the log
-    pub async fn get_log_size(&self) -> Result<usize> {
+    pub async fn get_log_size(&self, log_name: &str) -> Result<usize> {
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/size", self.api_base_url, self.default_log_name))
+            .get(&format!("{}/logs/{}/size", self.api_base_url, log_name))
             .send()
             .await?
             .json::<serde_json::Value>()
@@ -49,13 +48,13 @@ impl Client {
     /// Waits until the log reaches the expected size by polling the size endpoint
     /// This is much more efficient than fixed-duration sleeps
     /// STRICT: Returns error if size exceeds expected (indicates entries from elsewhere)
-    pub async fn wait_until_log_size(&self, expected_size: usize) -> Result<()> {
+    pub async fn wait_until_log_size(&self, log_name: &str, expected_size: usize) -> Result<()> {
         let start_time = std::time::Instant::now();
         let timeout = Duration::from_secs(30); // Maximum wait time
         let poll_interval = Duration::from_millis(100); // Check every 100ms
 
         loop {
-            let current_size = self.get_log_size().await?;
+            let current_size = self.get_log_size(log_name).await?;
             
             if current_size == expected_size {
                 println!("✅ Log reached expected size: {} (took {:?})", current_size, start_time.elapsed());
@@ -85,13 +84,7 @@ impl Client {
     }
 
     /// Creates a new test client that interacts with both the HTTP API and database
-    /// Default log is "test_log_single_source"
     pub async fn new(api_base_url: &str) -> Result<Self> {
-        Self::new_with_log(api_base_url, "test_log_single_source").await
-    }
-
-    /// Creates a new test client with a specific log name
-    pub async fn new_with_log(api_base_url: &str, log_name: &str) -> Result<Self> {
         // Set up HTTP client with reasonable timeouts
         let http_client = HttpClient::builder()
             .timeout(Duration::from_secs(10))
@@ -112,15 +105,14 @@ impl Client {
             http_client,
             db_client,
             api_base_url: api_base_url.to_string(),
-            default_log_name: log_name.to_string(),
         })
     }
 
     /// Gets the current merkle root
-    pub async fn get_root(&self) -> Result<Vec<u8>> {
+    pub async fn get_root(&self, log_name: &str) -> Result<Vec<u8>> {
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/root", self.api_base_url, self.default_log_name))
+            .get(&format!("{}/logs/{}/root", self.api_base_url, log_name))
             .send()
             .await?
             .json::<serde_json::Value>()
@@ -146,7 +138,7 @@ impl Client {
     }
 
     /// Gets an inclusion proof for a given hash or piece of data
-    pub async fn get_inclusion_proof(&self, data: &str) -> Result<InclusionProof> {
+    pub async fn get_inclusion_proof(&self, log_name: &str, data: &str) -> Result<InclusionProof> {
         // Compute the hash from the data
         let mut hasher = Sha256::new();
         hasher.update(data.as_bytes());
@@ -159,7 +151,7 @@ impl Client {
         // Make the request with the base64 encoded hash
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/proof", self.api_base_url, self.default_log_name))
+            .get(&format!("{}/logs/{}/proof", self.api_base_url, log_name))
             .query(&query)
             .send()
             .await?;
@@ -181,12 +173,12 @@ impl Client {
     }
 
     /// Gets a consistency proof proving that the current tree state is consistent with an older root hash
-    pub async fn get_consistency_proof(&self, old_root: Vec<u8>) -> Result<ConsistencyProof> {
+    pub async fn get_consistency_proof(&self, log_name: &str, old_root: Vec<u8>) -> Result<ConsistencyProof> {
         let query = crate::service::ConsistencyQuery { old_root };
 
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/consistency", self.api_base_url, self.default_log_name))
+            .get(&format!("{}/logs/{}/consistency", self.api_base_url, log_name))
             .query(&query)
             .send()
             .await?;
@@ -209,12 +201,12 @@ impl Client {
 
     /// Verifies that the current tree state is consistent with a previously observed state.
     /// Returns true if the current tree is a descendant of old_root (i.e., old tree is a prefix).
-    pub async fn verify_tree_consistency(&self, old_root: Vec<u8>) -> Result<bool> {
+    pub async fn verify_tree_consistency(&self, log_name: &str, old_root: Vec<u8>) -> Result<bool> {
         // Get consistency proof between the old root and current state
-        let proof = self.get_consistency_proof(old_root).await?;
+        let proof = self.get_consistency_proof(log_name, old_root).await?;
 
         // Get current root to validate the proof matches current state
-        let current_root = self.get_root().await?;
+        let current_root = self.get_root(log_name).await?;
         if proof.new_root != current_root {
             return Ok(false);
         }
@@ -226,10 +218,10 @@ impl Client {
     }
 
     /// Rebuilds the merkle tree from scratch
-    pub async fn trigger_rebuild(&self) -> Result<()> {
+    pub async fn trigger_rebuild(&self, log_name: &str) -> Result<()> {
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/rebuild", self.api_base_url, self.default_log_name))
+            .get(&format!("{}/logs/{}/rebuild", self.api_base_url, log_name))
             .send()
             .await?
             .json::<serde_json::Value>()
@@ -269,13 +261,15 @@ impl Client {
     /// Idempotently sets up test environment with logs and sources
     /// This can be called multiple times safely - does nothing if already configured
     pub async fn setup_test_environment(&self) -> Result<()> {
-        // Define our two test logs
-        let logs = vec![
-            ("test_log_single_source", "Log for single-source tests", vec!["source_log"]),
-            ("test_log_multi_source", "Log for multi-source tests", vec!["source_log", "test_source_a", "test_source_b"]),
+        // Define our test logs
+        // Format: (log_name, description, [(source_table, has_timestamp)])
+        let logs: Vec<(&str, &str, Vec<(&str, bool)>)> = vec![
+            ("test_log_single_source", "Log for single-source tests", vec![("source_log", true)]),
+            ("test_log_multi_source", "Log for multi-source tests", vec![("source_log", true), ("test_source_a", true), ("test_source_b", true), ("source_no_timestamp", false)]),
+            ("test_log_no_timestamp", "Log for testing sources without timestamps", vec![("source_no_timestamp", false), ("source_no_timestamp_b", false)]),
         ];
 
-        for (log_name, description, source_tables) in logs {
+        for (log_name, description, source_configs) in logs {
             // Create log if it doesn't exist (idempotent)
             let result = self.db_client
                 .execute(
@@ -289,10 +283,10 @@ impl Client {
             }
             
             // Create and register source tables
-            for table_name in source_tables {
+            for (table_name, has_timestamp) in source_configs {
                 // Create table if it doesn't exist (idempotent)
-                self.db_client
-                    .batch_execute(&format!(
+                let create_table_sql = if has_timestamp {
+                    format!(
                         r#"
                         CREATE TABLE IF NOT EXISTS {} (
                             id          BIGSERIAL PRIMARY KEY,
@@ -302,21 +296,37 @@ impl Client {
                         );
                         "#,
                         table_name
-                    ))
+                    )
+                } else {
+                    format!(
+                        r#"
+                        CREATE TABLE IF NOT EXISTS {} (
+                            id          BIGSERIAL PRIMARY KEY,
+                            data        TEXT NOT NULL,
+                            leaf_hash   BYTEA NOT NULL
+                        );
+                        "#,
+                        table_name
+                    )
+                };
+                
+                self.db_client
+                    .batch_execute(&create_table_sql)
                     .await?;
                 
                 // Register in verification_sources (idempotent)
+                let timestamp_column = if has_timestamp { Some("created_at") } else { None };
                 let result = self.db_client
                     .execute(
-                        "INSERT INTO verification_sources (source_table, log_name, hash_column, order_column) 
-                         VALUES ($1, $2, $3, $4) 
+                        "INSERT INTO verification_sources (source_table, log_name, hash_column, id_column, timestamp_column) 
+                         VALUES ($1, $2, $3, $4, $5) 
                          ON CONFLICT (source_table, log_name) DO NOTHING",
-                        &[&table_name, &log_name, &"leaf_hash", &"id"],
+                        &[&table_name, &log_name, &"leaf_hash", &"id", &timestamp_column],
                     )
                     .await?;
                 
                 if result > 0 {
-                    println!("✅ Registered '{}' in log '{}'", table_name, log_name);
+                    println!("✅ Registered '{}' in log '{}' (timestamp: {})", table_name, log_name, has_timestamp);
                 }
             }
         }
@@ -354,11 +364,11 @@ impl Client {
         Ok(row.get(0))
     }
 
-    pub async fn get_sources(&self) -> Result<Vec<tokio_postgres::Row>> {
+    pub async fn get_sources(&self, log_name: &str) -> Result<Vec<tokio_postgres::Row>> {
         let result = self.db_client
         .query(
             "SELECT source_table, source_id, id FROM merkle_log WHERE log_name = $1 ORDER BY id",
-            &[&self.default_log_name],
+            &[&log_name],
         )
         .await?;
 

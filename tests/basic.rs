@@ -13,13 +13,6 @@ async fn setup_client() -> Result<Client> {
     Ok(client)
 }
 
-async fn setup_client_multi_source() -> Result<Client> {
-    dotenv::dotenv().ok();
-    let client = Client::new_with_log("http://localhost:3000", "test_log_multi_source").await?;
-    client.setup_test_environment().await?;
-    Ok(client)
-}
-
 #[ignore]
 #[serial]
 #[tokio::test]
@@ -29,7 +22,7 @@ async fn test_inclusion_proofs() -> Result<()> {
     use sha2::{Digest, Sha256};
 
     // Get initial log size (may not be 0 if tests ran before)
-    let initial_size = client.get_log_size().await?;
+    let initial_size = client.get_log_size("test_log_single_source").await?;
     println!("📊 Initial log size: {}", initial_size);
 
     // Add several entries
@@ -49,7 +42,7 @@ async fn test_inclusion_proofs() -> Result<()> {
     // Wait until all entries are processed
     let expected_size = initial_size + entries.len();
     println!("⏳ Waiting for log to reach size {}...", expected_size);
-    match client.wait_until_log_size(expected_size).await {
+    match client.wait_until_log_size("test_log_single_source", expected_size).await {
         Ok(_) => {},
         Err(e) => {
             // Show diagnostic info on failure
@@ -59,11 +52,11 @@ async fn test_inclusion_proofs() -> Result<()> {
     }
 
     // Get the current root
-    let root = client.get_root().await?;
+    let root = client.get_root("test_log_single_source").await?;
 
     // Verify inclusion proofs for all entries using their hashes
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
-        let proof = client.get_inclusion_proof(entry).await?;
+        let proof = client.get_inclusion_proof("test_log_single_source", entry).await?;
 
         // Verify proof has correct root
         assert_eq!(
@@ -96,7 +89,7 @@ async fn test_consistency_proofs() -> Result<()> {
     let mut historical_roots = Vec::new();
 
     // Track current size for efficient waiting
-    let mut current_size = client.get_log_size().await?;
+    let mut current_size = client.get_log_size("test_log_single_source").await?;
     println!("📊 Initial log size: {}", current_size);
 
     // Add entries and store intermediate roots
@@ -111,10 +104,10 @@ async fn test_consistency_proofs() -> Result<()> {
             // Wait for this single entry to be processed
             current_size += 1;
             println!("⏳ Waiting for entry {}-{} (size {})...", i + 1, j + 1, current_size);
-            client.wait_until_log_size(current_size).await?;
+            client.wait_until_log_size("test_log_single_source", current_size).await?;
             
             // Store root after each entry
-            let root = client.get_root().await?;
+            let root = client.get_root("test_log_single_source").await?;
             println!(
                 "📸 Storing intermediate root after entry {}-{}",
                 i + 1,
@@ -132,17 +125,17 @@ async fn test_consistency_proofs() -> Result<()> {
     let entry = format!("last");
     client.add_entry(&entry).await?;
     current_size += 1;
-    client.wait_until_log_size(current_size).await?;
+    client.wait_until_log_size("test_log_single_source", current_size).await?;
 
     // Get final tree state
-    let final_root = client.get_root().await?;
+    let final_root = client.get_root("test_log_single_source").await?;
 
     // Verify consistency between each historical root and final state
     for (i, historical_root) in historical_roots.iter().enumerate() {
         println!("🔍 Verifying consistency with batch {}", i + 1);
         assert!(
             client
-                .verify_tree_consistency(historical_root.clone())
+                .verify_tree_consistency("test_log_single_source", historical_root.clone())
                 .await?,
             "Tree should be consistent with historical root from batch {}",
             i + 1
@@ -151,7 +144,7 @@ async fn test_consistency_proofs() -> Result<()> {
 
     println!("🔍 Consistency of root with itself should fail");
     assert!(
-        client.verify_tree_consistency(final_root).await.is_err(),
+        client.verify_tree_consistency("test_log_single_source", final_root).await.is_err(),
         "Consistency of root with itself should fail"
     );
 
@@ -167,7 +160,7 @@ async fn test_burst_operations() -> Result<()> {
     let client = setup_client().await?;
 
     // Get initial log size
-    let initial_size = client.get_log_size().await?;
+    let initial_size = client.get_log_size("test_log_single_source").await?;
     println!("📊 Initial log size: {}", initial_size);
 
     // Create a batch of entries and calculate their hashes
@@ -190,10 +183,10 @@ async fn test_burst_operations() -> Result<()> {
     // Wait until all entries are processed
     let expected_size = initial_size + entries.len();
     println!("⏳ Waiting for log to reach size {}...", expected_size);
-    client.wait_until_log_size(expected_size).await?;
+    client.wait_until_log_size("test_log_single_source", expected_size).await?;
 
     // Get final root
-    let root = client.get_root().await?;
+    let root = client.get_root("test_log_single_source").await?;
     println!(
         "🌳 Final merkle root after burst: {}",
         base64::engine::general_purpose::STANDARD.encode(&root)
@@ -201,7 +194,7 @@ async fn test_burst_operations() -> Result<()> {
 
     // Verify all entries are properly included using their hashes
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
-        let proof = client.get_inclusion_proof(entry).await?;
+        let proof = client.get_inclusion_proof("test_log_single_source", entry).await?;
         assert_eq!(
             root, proof.root,
             "Merkle root mismatch for entry: {}",
@@ -228,7 +221,7 @@ async fn test_large_batch_performance() -> Result<()> {
     let num_entries = 10_000;
 
     // Get initial log size
-    let initial_size = client.get_log_size().await?;
+    let initial_size = client.get_log_size("test_log_single_source").await?;
     println!("📊 Initial log size: {}", initial_size);
 
     println!(
@@ -277,10 +270,10 @@ async fn test_large_batch_performance() -> Result<()> {
     // Wait for final processing and get root
     let expected_size = initial_size + num_entries;
     println!("\n⏳ Waiting for log to reach size {}...", expected_size);
-    client.wait_until_log_size(expected_size).await?;
+    client.wait_until_log_size("test_log_single_source", expected_size).await?;
 
     // Get and verify final root
-    let root = client.get_root().await?;
+    let root = client.get_root("test_log_single_source").await?;
 
     println!(
         "Final root: {}",
@@ -299,7 +292,7 @@ async fn test_large_batch_performance() -> Result<()> {
 
     for idx in sample_indices {
         let (entry, hash) = &all_hashes[idx];
-        let proof = client.get_inclusion_proof(entry).await?;
+        let proof = client.get_inclusion_proof("test_log_single_source", entry).await?;
         assert!(
             proof.verify(hash)?,
             "Proof verification failed for entry: {}",
@@ -316,10 +309,10 @@ async fn test_large_batch_performance() -> Result<()> {
 #[tokio::test]
 async fn test_source_log_setup() -> Result<()> {
     // Use the multi-source log for this test
-    let client = setup_client_multi_source().await?;
+    let client = setup_client().await?;
 
     // Get initial size
-    let initial_size = client.get_log_size().await?;
+    let initial_size = client.get_log_size("test_log_multi_source").await?;
     println!("📊 Initial log size: {}", initial_size);
 
     // Add entries to all three sources with interleaved timing
@@ -334,10 +327,10 @@ async fn test_source_log_setup() -> Result<()> {
     // Wait for batch processor to process all entries
     let expected_size = initial_size + 5;
     println!("\n⏳ Waiting for log to reach size {}...", expected_size);
-    client.wait_until_log_size(expected_size).await?;
+    client.wait_until_log_size("test_log_multi_source", expected_size).await?;
 
     // Verify entries were processed into merkle_log from all sources
-    let rows = client.get_sources().await?;
+    let rows = client.get_sources("test_log_multi_source").await?;
 
     assert!(rows.len() >= 5, "Should have processed at least 5 entries");
     
@@ -363,6 +356,221 @@ async fn test_source_log_setup() -> Result<()> {
     );
     println!("   - Merkle log IDs are strictly increasing");
     println!("   - Phase 1 validation: SUCCESS! ✨");
+    
+    Ok(())
+}
+
+#[ignore]
+#[serial]
+#[tokio::test]
+async fn test_universal_ordering() -> Result<()> {
+    let client = setup_client().await?;
+    
+    println!("\n🧪 Testing universal ordering with mixed timestamp/non-timestamp sources");
+    
+    // Get initial log size
+    let initial_size = client.get_log_size("test_log_multi_source").await?;
+    println!("📊 Initial log size: {}", initial_size);
+    
+    // Insert entries sequentially - timestamped sources will get increasing timestamps automatically
+    println!("\n📝 Inserting entries into timestamped sources:");
+    
+    let id1 = client.add_entry_to_source("source_log", "entry_t1").await?;
+    println!("  ✓ source_log id={} (timestamped)", id1);
+    
+    let id2 = client.add_entry_to_source("test_source_a", "entry_t2").await?;
+    println!("  ✓ test_source_a id={} (timestamped)", id2);
+    
+    let id3 = client.add_entry_to_source("test_source_b", "entry_t3").await?;
+    println!("  ✓ test_source_b id={} (timestamped)", id3);
+    
+    println!("\n📝 Inserting entries into non-timestamped source:");
+    
+    let id4 = client.add_entry_to_source("source_no_timestamp", "entry_no_ts_1").await?;
+    println!("  ✓ source_no_timestamp id={} (no timestamp)", id4);
+    
+    let id5 = client.add_entry_to_source("source_no_timestamp", "entry_no_ts_2").await?;
+    println!("  ✓ source_no_timestamp id={} (no timestamp)", id5);
+    
+    // Step 3: Wait for processing
+    let expected_size = initial_size + 5;
+    println!("\n⏳ Waiting for {} entries to be processed...", expected_size);
+    client.wait_until_log_size("test_log_multi_source", expected_size).await?;
+    
+    // Step 4: Get inclusion proofs to determine exact ordering
+    println!("\n🔍 Checking entry positions in the tree:");
+    
+    let proof1 = client.get_inclusion_proof("test_log_multi_source", "entry_t1").await?;
+    let proof2 = client.get_inclusion_proof("test_log_multi_source", "entry_t2").await?;
+    let proof3 = client.get_inclusion_proof("test_log_multi_source", "entry_t3").await?;
+    let proof4 = client.get_inclusion_proof("test_log_multi_source", "entry_no_ts_1").await?;
+    let proof5 = client.get_inclusion_proof("test_log_multi_source", "entry_no_ts_2").await?;
+    
+    println!("  entry_t1 (timestamped, source_log:{}): index {}", id1, proof1.index);
+    println!("  entry_t2 (timestamped, test_source_a:{}): index {}", id2, proof2.index);
+    println!("  entry_t3 (timestamped, test_source_b:{}): index {}", id3, proof3.index);
+    println!("  entry_no_ts_1 (no timestamp, source_no_timestamp:{}): index {}", id4, proof4.index);
+    println!("  entry_no_ts_2 (no timestamp, source_no_timestamp:{}): index {}", id5, proof5.index);
+    
+    // Step 5: Verify ordering
+    println!("\n✅ Verifying ordering constraints:");
+    
+    // Constraint 1: All timestamped entries come before non-timestamped
+    assert!(
+        proof1.index < proof4.index && proof1.index < proof5.index,
+        "Timestamped entry (t1) should come before non-timestamped entries"
+    );
+    assert!(
+        proof2.index < proof4.index && proof2.index < proof5.index,
+        "Timestamped entry (t2) should come before non-timestamped entries"
+    );
+    assert!(
+        proof3.index < proof4.index && proof3.index < proof5.index,
+        "Timestamped entry (t3) should come before non-timestamped entries"
+    );
+    println!("  ✓ All timestamped entries come before non-timestamped entries");
+    
+    // Constraint 2: Timestamped entries are ordered chronologically
+    assert!(
+        proof1.index < proof2.index,
+        "Earlier timestamp (t1) should come before later timestamp (t2)"
+    );
+    assert!(
+        proof2.index < proof3.index,
+        "Earlier timestamp (t2) should come before later timestamp (t3)"
+    );
+    println!("  ✓ Timestamped entries are in chronological order");
+    
+    // Constraint 3: Non-timestamped entries are ordered by id (same table)
+    assert!(
+        proof4.index < proof5.index,
+        "Lower id ({}) should come before higher id ({}) in same table",
+        id4, id5
+    );
+    println!("  ✓ Non-timestamped entries maintain id order within same table");
+    
+    // Constraint 4: Verify they are consecutive (no gaps from initial_size)
+    let expected_indices: Vec<usize> = (initial_size..initial_size+5).collect();
+    let actual_indices = vec![proof1.index, proof2.index, proof3.index, proof4.index, proof5.index];
+    let mut sorted_indices = actual_indices.clone();
+    sorted_indices.sort();
+    
+    assert_eq!(
+        sorted_indices, expected_indices,
+        "Indices should be consecutive starting from {}",
+        initial_size
+    );
+    println!("  ✓ All indices are consecutive with no gaps");
+    
+    println!("\n✅ Universal ordering test complete!");
+    println!("   - Chronological ordering: VERIFIED ✨");
+    println!("   - Timestamp/non-timestamp separation: VERIFIED ✨");
+    println!("   - ID-based ordering for non-timestamp: VERIFIED ✨");
+    
+    Ok(())
+}
+
+#[ignore]
+#[serial]
+#[tokio::test]
+async fn test_no_timestamp_ordering() -> Result<()> {
+    let client = setup_client().await?;
+    
+    println!("\n🧪 Testing ordering with ONLY non-timestamped sources (no timestamps at all)");
+    
+    // Get initial log size
+    let initial_size = client.get_log_size("test_log_no_timestamp").await?;
+    println!("📊 Initial log size: {}", initial_size);
+    
+    // Insert entries with specific ids to test ordering
+    // We'll insert in a non-sequential order to verify the processor sorts correctly
+    println!("\n📝 Inserting entries in non-sequential order:");
+    
+    // Insert into source_no_timestamp_b with id that will be higher
+    let id1 = client.add_entry_to_source("source_no_timestamp_b", "entry_b_1").await?;
+    println!("  ✓ source_no_timestamp_b id={}", id1);
+    
+    // Insert into source_no_timestamp with lower id
+    let id2 = client.add_entry_to_source("source_no_timestamp", "entry_a_1").await?;
+    println!("  ✓ source_no_timestamp id={}", id2);
+    
+    // Insert another into source_no_timestamp_b
+    let id3 = client.add_entry_to_source("source_no_timestamp_b", "entry_b_2").await?;
+    println!("  ✓ source_no_timestamp_b id={}", id3);
+    
+    // Insert another into source_no_timestamp
+    let id4 = client.add_entry_to_source("source_no_timestamp", "entry_a_2").await?;
+    println!("  ✓ source_no_timestamp id={}", id4);
+    
+    // Wait for processing
+    let expected_size = initial_size + 4;
+    println!("\n⏳ Waiting for {} entries to be processed...", expected_size);
+    client.wait_until_log_size("test_log_no_timestamp", expected_size).await?;
+    
+    // Get inclusion proofs to determine exact ordering
+    println!("\n🔍 Checking entry positions in the tree:");
+    
+    let proof1 = client.get_inclusion_proof("test_log_no_timestamp", "entry_b_1").await?;
+    let proof2 = client.get_inclusion_proof("test_log_no_timestamp", "entry_a_1").await?;
+    let proof3 = client.get_inclusion_proof("test_log_no_timestamp", "entry_b_2").await?;
+    let proof4 = client.get_inclusion_proof("test_log_no_timestamp", "entry_a_2").await?;
+    
+    println!("  entry_b_1 (source_no_timestamp_b:{}): index {}", id1, proof1.index);
+    println!("  entry_a_1 (source_no_timestamp:{}): index {}", id2, proof2.index);
+    println!("  entry_b_2 (source_no_timestamp_b:{}): index {}", id3, proof3.index);
+    println!("  entry_a_2 (source_no_timestamp:{}): index {}", id4, proof4.index);
+    
+    // Verify ordering
+    println!("\n✅ Verifying ordering constraints:");
+    
+    // Create a list of (id, table_name, proof_index) for verification
+    let mut entries = vec![
+        (id1, "source_no_timestamp_b", proof1.index),
+        (id2, "source_no_timestamp", proof2.index),
+        (id3, "source_no_timestamp_b", proof3.index),
+        (id4, "source_no_timestamp", proof4.index),
+    ];
+    
+    // Sort by (id, table_name) to get expected order
+    entries.sort_by(|a, b| {
+        match a.0.cmp(&b.0) {
+            std::cmp::Ordering::Equal => a.1.cmp(b.1),
+            other => other,
+        }
+    });
+    
+    println!("  Expected order by (id, table_name):");
+    for (i, (id, table, _)) in entries.iter().enumerate() {
+        println!("    Position {}: {}:{}", initial_size + i, table, id);
+    }
+    
+    // Verify indices match expected order
+    for (i, (id, table, actual_index)) in entries.iter().enumerate() {
+        let expected_index = initial_size + i;
+        assert_eq!(
+            *actual_index, expected_index,
+            "Entry {}:{} should be at index {} but is at {}",
+            table, id, expected_index, actual_index
+        );
+    }
+    println!("  ✓ All entries are in correct (id, table_name) order");
+    
+    // Verify they are consecutive
+    let indices = vec![proof1.index, proof2.index, proof3.index, proof4.index];
+    let mut sorted_indices = indices.clone();
+    sorted_indices.sort();
+    
+    let expected_indices: Vec<usize> = (initial_size..initial_size+4).collect();
+    assert_eq!(
+        sorted_indices, expected_indices,
+        "Indices should be consecutive starting from {}",
+        initial_size
+    );
+    println!("  ✓ All indices are consecutive with no gaps");
+    
+    println!("\n✅ No-timestamp ordering test complete!");
+    println!("   - Pure ID-based ordering: VERIFIED ✨");
+    println!("   - Table name tertiary sort: VERIFIED ✨");
     
     Ok(())
 }

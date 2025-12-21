@@ -1,35 +1,56 @@
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use deadpool_postgres::Object as PooledConnection;
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher, BTreeSet};
 use std::hash::{Hash, Hasher};
 
 use super::{AppState, SourceConfig};
 use crate::LeafHash;
 
 /// Represents a row from a source table ready to be inserted into merkle_log
-#[derive(Debug)]
+/// Implements Ord for universal ordering: (timestamp, id, table_name)
+#[derive(Debug, Clone, Eq)]
 struct SourceRow {
     source_table: String,
     source_id: i64,
     leaf_hash: Vec<u8>,
-    order_value: i64,
+    order_timestamp: Option<DateTime<Utc>>,
 }
 
-/// Composite sorting key that ensures uniqueness by combining order_value with source_table and source_id
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
-struct SortKey {
-    order_value: i64,
-    source_table: String,
-    source_id: i64,
+impl PartialEq for SourceRow {
+    fn eq(&self, other: &Self) -> bool {
+        self.order_timestamp == other.order_timestamp
+            && self.source_id == other.source_id
+            && self.source_table == other.source_table
+    }
 }
 
-impl SourceRow {
-    fn sort_key(&self) -> SortKey {
-        SortKey {
-            order_value: self.order_value,
-            source_table: self.source_table.clone(),
-            source_id: self.source_id,
+impl Ord for SourceRow {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Primary: timestamp (None sorts after Some for our use case)
+        // Secondary: source_id (guaranteed unique per table)
+        // Tertiary: source_table (for complete determinism)
+        match (&self.order_timestamp, &other.order_timestamp) {
+            (Some(a), Some(b)) => {
+                a.cmp(b)
+                    .then_with(|| self.source_id.cmp(&other.source_id))
+                    .then_with(|| self.source_table.cmp(&other.source_table))
+            }
+            (Some(_), None) => std::cmp::Ordering::Less,  // Timestamped entries come first
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => {
+                // Both have no timestamp, sort by id then table
+                self.source_id
+                    .cmp(&other.source_id)
+                    .then_with(|| self.source_table.cmp(&other.source_table))
+            }
         }
+    }
+}
+
+impl PartialOrd for SourceRow {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -239,7 +260,7 @@ async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
 async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<Vec<SourceConfig>> {
     let rows = conn
         .query(
-            "SELECT source_table, hash_column, order_column, log_name 
+            "SELECT source_table, hash_column, id_column, timestamp_column, log_name 
              FROM verification_sources 
              WHERE enabled = true AND log_name = $1 
              ORDER BY source_table",
@@ -251,9 +272,10 @@ async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<
     for row in rows {
         let table_name: String = row.get(0);
         let hash_column: String = row.get(1);
-        let order_column: String = row.get(2);
-        let log_name: String = row.get(3);
-        configs.push(SourceConfig::new(&table_name, &hash_column, &order_column, &log_name));
+        let id_column: String = row.get(2);
+        let timestamp_column: Option<String> = row.get(3);
+        let log_name: String = row.get(4);
+        configs.push(SourceConfig::new(&table_name, &hash_column, &id_column, timestamp_column, &log_name));
     }
 
     if !configs.is_empty() {
@@ -334,8 +356,8 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
         .await?
         .get(0);
 
-    // Collect rows from all configured source tables
-    let mut all_source_rows = Vec::new();
+    // Collect rows from all configured source tables into a BTreeSet for automatic sorting
+    let mut all_source_rows = BTreeSet::new();
 
     for source_config in valid_configs.iter() {
         // Get last processed source_id for this specific source table in this log
@@ -347,41 +369,55 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
             .await?
             .get(0);
 
-        // Query unprocessed rows from this source table
-        let query = format!(
-            "SELECT {}, {} FROM {} WHERE {} > $1 ORDER BY {} LIMIT $2",
-            source_config.order_column,
-            source_config.hash_column,
-            source_config.table_name,
-            source_config.order_column,
-            source_config.order_column
-        );
+        // Build query based on whether timestamp column is configured
+        let query = if let Some(ref timestamp_col) = source_config.timestamp_column {
+            format!(
+                "SELECT {}, {}, {} FROM {} WHERE {} > $1 ORDER BY {} LIMIT $2",
+                source_config.id_column,
+                source_config.hash_column,
+                timestamp_col,
+                source_config.table_name,
+                source_config.id_column,
+                source_config.id_column
+            )
+        } else {
+            format!(
+                "SELECT {}, {} FROM {} WHERE {} > $1 ORDER BY {} LIMIT $2",
+                source_config.id_column,
+                source_config.hash_column,
+                source_config.table_name,
+                source_config.id_column,
+                source_config.id_column
+            )
+        };
 
         let rows = txn.query(&query, &[&last_processed, &batch_size]).await?;
 
         for row in rows {
-            let order_value: i64 = row.get(0);
+            let source_id: i64 = row.get(0);
             let leaf_hash: Vec<u8> = row.get(1);
+            let order_timestamp: Option<DateTime<Utc>> = if source_config.timestamp_column.is_some() {
+                row.get(2)
+            } else {
+                None
+            };
 
-            all_source_rows.push(SourceRow {
+            all_source_rows.insert(SourceRow {
                 source_table: source_config.table_name.clone(),
-                source_id: order_value, // Using order_value as source_id (assumes id column)
+                source_id,
                 leaf_hash,
-                order_value,
+                order_timestamp,
             });
         }
     }
 
-    // Sort all rows by composite key (order_value, source_table, source_id) to ensure unique ordering
-    all_source_rows.sort_by_key(|r| r.sort_key());
-
-    // Limit to batch_size after merging
-    all_source_rows.truncate(batch_size as usize);
+    // BTreeSet automatically maintains sorted order, limit to batch_size after merging
+    let rows_to_insert: Vec<_> = all_source_rows.into_iter().take(batch_size as usize).collect();
 
     // Insert into merkle_log with sequential IDs
-    let rows_inserted = all_source_rows.len() as i64;
+    let rows_inserted = rows_to_insert.len() as i64;
     
-    for (offset, source_row) in all_source_rows.iter().enumerate() {
+    for (offset, source_row) in rows_to_insert.iter().enumerate() {
         let merkle_id = next_id + offset as i64;
         
         txn.execute(
