@@ -26,8 +26,10 @@ pub enum RewindError {
 /// A merkle tree implementation based on Certificate Transparency that maintains root history and provides proofs
 pub struct CtMerkleTree {
     tree: MemoryBackedTree<Sha256, LeafHash>,
-    index_map: HashMap<Vec<u8>, usize>,
-    root_map: HashMap<Vec<u8>, usize>,
+    /// Maps leaf hash to its position (index) in the tree
+    leaf_hash_to_index: HashMap<Vec<u8>, usize>,
+    /// Maps root hash to the tree size that produced it
+    root_hash_to_size: HashMap<Vec<u8>, usize>,
 }
 
 impl CtMerkleTree {
@@ -35,19 +37,19 @@ impl CtMerkleTree {
     pub fn new() -> Self {
         Self {
             tree: MemoryBackedTree::new(),
-            index_map: HashMap::new(),
-            root_map: HashMap::new(),
+            leaf_hash_to_index: HashMap::new(),
+            root_hash_to_size: HashMap::new(),
         }
     }
 
     /// Adds a new leaf to the tree and updates the associated maps
     pub fn push(&mut self, leaf: LeafHash) {
         let idx = self.tree.len();
-        self.index_map
+        self.leaf_hash_to_index
             .insert(leaf.hash.clone(), idx.try_into().unwrap());
         self.tree.push(leaf);
         let root = self.tree.root();
-        self.root_map.insert(
+        self.root_hash_to_size.insert(
             root.as_bytes().to_vec(),
             self.tree.len().try_into().unwrap(),
         );
@@ -101,12 +103,12 @@ impl CtMerkleTree {
 
     /// Gets the index for a given leaf hash
     pub fn get_index(&self, hash: &[u8]) -> Option<usize> {
-        self.index_map.get(hash).copied()
+        self.leaf_hash_to_index.get(hash).copied()
     }
 
     /// Gets the tree size for a given root hash
     pub fn get_size_for_root(&self, root: &[u8]) -> Option<usize> {
-        self.root_map.get(root).copied()
+        self.root_hash_to_size.get(root).copied()
     }
 
     /// Returns a tree corresponding to the historical state at the given root hash.
@@ -114,9 +116,9 @@ impl CtMerkleTree {
         &self,
         historical_root: &[u8],
     ) -> Result<MemoryBackedTree<Sha256, LeafHash>, RewindError> {
-        // Get size from root map
+        // Get size from root hash to size map
         let size = self
-            .root_map
+            .root_hash_to_size
             .get(historical_root)
             .ok_or(RewindError::RootNotFound)?;
 
@@ -147,7 +149,7 @@ impl CtMerkleTree {
     ) -> Result<InclusionProof<Sha256>, ProofError> {
         // Get index for the leaf
         let idx = self
-            .index_map
+            .leaf_hash_to_index
             .get(leaf_hash)
             .ok_or(ProofError::LeafNotFound)?;
 
@@ -174,7 +176,7 @@ impl CtMerkleTree {
         proof: &InclusionProof<Sha256>,
     ) -> Result<bool, ct_merkle::InclusionVerifError> {
         // Get index for this leaf hash
-        let index = match self.index_map.get(leaf_hash) {
+        let index = match self.leaf_hash_to_index.get(leaf_hash) {
             Some(idx) => *idx,
             None => return Ok(false),
         };
@@ -210,11 +212,11 @@ impl CtMerkleTree {
     ) -> Result<ConsistencyProof<Sha256>, ProofError> {
         // Get sizes for both roots
         let old_size = *self
-            .root_map
+            .root_hash_to_size
             .get(old_root)
             .ok_or(ProofError::RootNotFound)?;
         let new_size = *self
-            .root_map
+            .root_hash_to_size
             .get(new_root)
             .ok_or(ProofError::RootNotFound)?;
 
@@ -249,7 +251,7 @@ impl CtMerkleTree {
         proof: &ConsistencyProof<Sha256>,
     ) -> Result<bool, ct_merkle::ConsistencyVerifError> {
         // Get sizes for both roots
-        let old_size = match self.root_map.get(old_root) {
+        let old_size = match self.root_hash_to_size.get(old_root) {
             Some(size) => *size,
             None => return Ok(false),
         };

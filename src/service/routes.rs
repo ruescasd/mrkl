@@ -95,7 +95,6 @@ pub async fn get_inclusion_proof(
     State(state): State<AppState>,
 ) -> JsonResponse {
 
-    println!("Generating inclusion proof for log '{}'", log_name);
     // Handle query parameter parsing errors
     let Query(query) = match query_result {
         Ok(query) => query,

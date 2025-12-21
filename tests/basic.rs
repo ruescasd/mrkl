@@ -1,4 +1,4 @@
-// cargo test --test '*' -- --include-ignored
+// cargo test --test basic -- --include-ignored --nocapture
 use anyhow::Result;
 use base64::Engine;
 use mrkl::service::Client;
