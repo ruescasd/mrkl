@@ -27,48 +27,67 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
         client
             .batch_execute(
                 r#"
-            DROP TABLE IF EXISTS merkle_log;
+            DROP TABLE IF EXISTS merkle_log CASCADE;
+            DROP TABLE IF EXISTS verification_sources CASCADE;
+            DROP TABLE IF EXISTS verification_logs CASCADE;
         "#,
             )
             .await?;
         println!("✅ Existing objects dropped.");
     }
 
-    // 1. Create the verification sources configuration table
+    // 1. Create the verification logs table - defines independent merkle logs
+    client
+        .batch_execute(
+            r#"
+        CREATE TABLE IF NOT EXISTS verification_logs (
+            log_name TEXT PRIMARY KEY,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            description TEXT,
+            enabled BOOLEAN NOT NULL DEFAULT true
+        );
+    "#,
+        )
+        .await?;
+    println!("✅ Table 'verification_logs' is ready.");
+
+    // 2. Create the verification sources configuration table - sources can belong to multiple logs
     client
         .batch_execute(
             r#"
         CREATE TABLE IF NOT EXISTS verification_sources (
-            id SERIAL PRIMARY KEY,
             source_table TEXT NOT NULL,
+            log_name TEXT NOT NULL REFERENCES verification_logs(log_name) ON DELETE CASCADE,
             hash_column TEXT NOT NULL,
             order_column TEXT NOT NULL,
             enabled BOOLEAN NOT NULL DEFAULT true,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            UNIQUE(source_table)
+            PRIMARY KEY (source_table, log_name)
         );
     "#,
         )
         .await?;
     println!("✅ Table 'verification_sources' is ready.");
 
-    // 2. Create the merkle log table with strict controls - supports multiple sources
+    // 3. Create the merkle log table with strict controls - supports multiple logs and sources
     client
         .batch_execute(
             r#"
         CREATE TABLE IF NOT EXISTS merkle_log (
-            id BIGINT PRIMARY KEY,
+            id BIGSERIAL PRIMARY KEY,
+            log_name TEXT NOT NULL REFERENCES verification_logs(log_name) ON DELETE CASCADE,
             source_table TEXT NOT NULL,
             source_id BIGINT NOT NULL,
             leaf_hash BYTEA NOT NULL,
             processed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            CONSTRAINT merkle_log_immutable CHECK (processed_at = processed_at)
+            CONSTRAINT merkle_log_immutable CHECK (processed_at = processed_at),
+            UNIQUE (log_name, source_table, source_id)
         );
 
-        -- Index on (source_table, source_id) for lookups and duplicate prevention across sources
-        CREATE UNIQUE INDEX merkle_log_source_idx ON merkle_log(source_table, source_id);
+        -- Index for querying a specific log's entries in order
+        CREATE INDEX IF NOT EXISTS idx_merkle_log_by_log ON merkle_log(log_name, id);
         -- Index on leaf_hash for proof generation
-        CREATE INDEX merkle_log_hash_idx ON merkle_log(leaf_hash);
+        CREATE INDEX IF NOT EXISTS merkle_log_hash_idx ON merkle_log(leaf_hash);
     "#,
         )
         .await?;

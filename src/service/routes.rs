@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Query, State},
+    extract::{Path, Query, State},
     response::Json,
 };
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::AppState;
-use crate::{ConsistencyProof, InclusionProof, LeafHash};
+use crate::{ConsistencyProof, InclusionProof};
+
+// HTTP handlers - read-only access to in-memory DashMap state
+// All database operations are handled exclusively by the batch processor
+// This ensures clean separation: HTTP handlers never block on database I/O
 
 // Type alias for our JSON responses
 type JsonResponse = Json<serde_json::Value>;
@@ -25,49 +29,23 @@ pub struct ConsistencyQuery {
     pub old_root: Vec<u8>,
 }
 
-// Fetches all entries from the database to rebuild the merkle tree
-// Note: merkle_log may contain entries from multiple source tables,
-// but the tree only cares about sequential ordering by id and the leaf hashes
-pub async fn fetch_all_entries(
-    db_pool: &deadpool_postgres::Pool,
-) -> Result<(Vec<LeafHash>, Vec<(Vec<u8>, usize)>, i64), anyhow::Error> {
-    println!("🔄 Fetching all entries from database...");
+// Handler for the /logs/{log_name}/root endpoint
+pub async fn get_merkle_root(
+    Path(log_name): Path<String>,
+    State(state): State<AppState>,
+) -> JsonResponse {
+    // Get or create the merkle state for this log
+    let merkle_state_arc = match state.merkle_states.get(&log_name) {
+        Some(arc) => arc.clone(),
+        None => {
+            return Json(json!({
+                "status": "error",
+                "error": format!("Log '{}' not found", log_name)
+            }));
+        }
+    };
 
-    // Get connection from pool
-    let conn = db_pool.get().await?;
-
-    // Query all rows from merkle_log which guarantees sequential order
-    let rows = conn
-        .query(
-            "SELECT pl.id, pl.leaf_hash
-             FROM merkle_log pl
-             ORDER BY pl.id",
-            &[],
-        )
-        .await?;
-
-    // Create vectors for both the hashes and the index mappings
-    let mut leaf_hashes = Vec::new();
-    let mut index_mappings = Vec::new();
-    let mut last_id = 0;
-
-    // Collect all entries and mappings - now based only on leaf_hash
-    for (idx, row) in rows.into_iter().enumerate() {
-        let id = row.get::<_, i64>("id");
-        let hash = row.get::<_, Vec<u8>>("leaf_hash");
-
-        leaf_hashes.push(LeafHash { hash: hash.clone() });
-        index_mappings.push((hash, idx));
-        last_id = id;
-    }
-
-    println!("✅ Fetched {} entries from database", leaf_hashes.len());
-    Ok((leaf_hashes, index_mappings, last_id))
-}
-
-// Handler for the /root endpoint
-pub async fn get_merkle_root(State(state): State<AppState>) -> JsonResponse {
-    let merkle_state = state.merkle_state.read();
+    let merkle_state = merkle_state_arc.read();
     if merkle_state.tree.len() == 0 {
         return Json(json!({
             "status": "error",
@@ -79,15 +57,45 @@ pub async fn get_merkle_root(State(state): State<AppState>) -> JsonResponse {
         "merkle_root": base64::engine::general_purpose::STANDARD.encode(&root),
         "tree_size": merkle_state.tree.len(),
         "last_processed_id": merkle_state.last_processed_id,
+        "log_name": log_name,
         "status": "ok"
     }))
 }
 
-// Handler for the /proof endpoint that generates inclusion proofs
+// Handler for the /logs/{log_name}/size endpoint
+pub async fn get_log_size(
+    Path(log_name): Path<String>,
+    State(state): State<AppState>,
+) -> JsonResponse {
+    // Get the merkle state for this log
+    let merkle_state_arc = match state.merkle_states.get(&log_name) {
+        Some(arc) => arc.clone(),
+        None => {
+            // Log doesn't exist yet - return size 0
+            return Json(json!({
+                "status": "ok",
+                "log_name": log_name,
+                "size": 0
+            }));
+        }
+    };
+
+    let merkle_state = merkle_state_arc.read();
+    Json(json!({
+        "status": "ok",
+        "log_name": log_name,
+        "size": merkle_state.tree.len()
+    }))
+}
+
+// Handler for the /logs/{log_name}/proof endpoint that generates inclusion proofs
 pub async fn get_inclusion_proof(
+    Path(log_name): Path<String>,
     query_result: Result<Query<InclusionQuery>, axum::extract::rejection::QueryRejection>,
     State(state): State<AppState>,
 ) -> JsonResponse {
+
+    println!("Generating inclusion proof for log '{}'", log_name);
     // Handle query parameter parsing errors
     let Query(query) = match query_result {
         Ok(query) => query,
@@ -102,7 +110,19 @@ pub async fn get_inclusion_proof(
             }));
         }
     };
-    let merkle_state = state.merkle_state.read();
+
+    // Get the merkle state for this log
+    let merkle_state_arc = match state.merkle_states.get(&log_name) {
+        Some(arc) => arc.clone(),
+        None => {
+            return Json(json!({
+                "status": "error",
+                "error": format!("Log '{}' not found", log_name)
+            }));
+        }
+    };
+
+    let merkle_state = merkle_state_arc.read();
 
     // Look up the index in our O(1) index map
     let tree = &merkle_state.tree;
@@ -134,6 +154,7 @@ pub async fn get_inclusion_proof(
 
             Json(json!({
                 "status": "ok",
+                "log_name": log_name,
                 "proof": inclusion_proof
             }))
         }
@@ -144,25 +165,9 @@ pub async fn get_inclusion_proof(
     }
 }
 
-// Handler for the /rebuild endpoint
-#[axum::debug_handler]
-pub async fn trigger_rebuild(State(state): State<AppState>) -> JsonResponse {
-    match rebuild_tree(&state).await {
-        Ok((size, root, last_id)) => Json(json!({
-            "status": "ok",
-            "tree_size": size,
-            "merkle_root": base64::engine::general_purpose::STANDARD.encode(root),
-            "last_processed_id": last_id,
-        })),
-        Err(e) => Json(json!({
-            "status": "error",
-            "error": e.to_string()
-        })),
-    }
-}
-
-// Handler for the /consistency endpoint that generates consistency proofs
+// Handler for the /logs/{log_name}/consistency endpoint that generates consistency proofs
 pub async fn get_consistency_proof(
+    Path(log_name): Path<String>,
     query_result: Result<Query<ConsistencyQuery>, axum::extract::rejection::QueryRejection>,
     State(state): State<AppState>,
 ) -> JsonResponse {
@@ -180,7 +185,19 @@ pub async fn get_consistency_proof(
             }));
         }
     };
-    let merkle_state = state.merkle_state.read();
+
+    // Get the merkle state for this log
+    let merkle_state_arc = match state.merkle_states.get(&log_name) {
+        Some(arc) => arc.clone(),
+        None => {
+            return Json(json!({
+                "status": "error",
+                "error": format!("Log '{}' not found", log_name)
+            }));
+        }
+    };
+
+    let merkle_state = merkle_state_arc.read();
     let tree = &merkle_state.tree;
 
     // Try to generate consistency proof
@@ -202,6 +219,7 @@ pub async fn get_consistency_proof(
             // Return the verified proof
             Json(json!({
                 "status": "ok",
+                "log_name": log_name,
                 "proof": ConsistencyProof {
                     old_tree_size: old_size,
                     old_root: query.old_root,
@@ -243,49 +261,4 @@ pub mod proof_bytes_format {
     }
 }
 
-/// Rebuilds the merkle tree and associated maps from scratch using database entries.
-/// Returns the number of entries, final root hash, and last processed ID on success.
-pub async fn rebuild_tree(state: &AppState) -> anyhow::Result<(usize, Vec<u8>, i64)> {
-    println!("🔄 Starting tree rebuild...");
 
-    // Measure database fetch time
-    let fetch_start = std::time::Instant::now();
-    let (leaf_hashes, _s, last_id) = fetch_all_entries(&state.db_pool).await?;
-    let fetch_time = fetch_start.elapsed();
-    println!(
-        "📥 Database fetch completed in {}ms",
-        fetch_time.as_millis()
-    );
-
-    // Measure computation time
-    let compute_start = std::time::Instant::now();
-
-    // Create new merkle state and build tree
-    let mut merkle_state = crate::service::MerkleState::new();
-
-    // Add leaf hashes to the tree (this will update internal maps)
-    for leaf_hash in leaf_hashes {
-        merkle_state.update_with_entry(leaf_hash, last_id);
-    }
-
-    // Get final state
-    let size = merkle_state.tree.len();
-    let root = merkle_state.tree.root();
-
-    let compute_time = compute_start.elapsed();
-    let total_time = fetch_time + compute_time;
-    println!(
-        "🧮 Tree computation completed in {}ms",
-        compute_time.as_millis()
-    );
-    println!(
-        "✅ Total rebuild time: {}ms for {} entries",
-        total_time.as_millis(),
-        size
-    );
-
-    // Update the merkle state
-    *state.merkle_state.write() = merkle_state;
-
-    Ok((size, root, last_id))
-}

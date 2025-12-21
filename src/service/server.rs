@@ -2,10 +2,11 @@ use anyhow::Result;
 use axum::{Json, Router, http::StatusCode, routing::get};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use dashmap::DashMap;
 use deadpool_postgres::{Config, ManagerConfig, RecyclingMethod, Runtime};
 use tokio_postgres::NoTls;
 
-use super::{AppState, MerkleState};
+use super::AppState;
 
 /// Creates and configures the HTTP server with all routes
 pub fn create_server(app_state: AppState) -> Router {
@@ -16,22 +17,22 @@ pub fn create_server(app_state: AppState) -> Router {
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "status": "error",
-                "error": "Route not found. Available endpoints: /root, /rebuild, /proof, /consistency"
+                "error": "Route not found. Available endpoints: /logs/{log_name}/root, /logs/{log_name}/size, /logs/{log_name}/proof, /logs/{log_name}/consistency"
             })),
         )
     }
 
     // Build our application with routes and error handling
     Router::new()
-        .route("/root", get(crate::service::get_merkle_root))
-        .route("/rebuild", get(crate::service::trigger_rebuild))
-        .route("/proof", get(crate::service::get_inclusion_proof))
-        .route("/consistency", get(crate::service::get_consistency_proof))
+        .route("/logs/:log_name/root", get(crate::service::get_merkle_root))
+        .route("/logs/:log_name/size", get(crate::service::get_log_size))
+        .route("/logs/:log_name/proof", get(crate::service::get_inclusion_proof))
+        .route("/logs/:log_name/consistency", get(crate::service::get_consistency_proof))
         .with_state(app_state)
         .fallback(handle_unmatched)
 }
 
-/// Initialize the application state with database connection pool and empty merkle state
+/// Initialize the application state with database connection pool and empty merkle states map
 pub async fn initialize_app_state() -> Result<AppState> {
     println!("Connecting to database...");
 
@@ -47,14 +48,11 @@ pub async fn initialize_app_state() -> Result<AppState> {
     // Create connection pool
     let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls)?;
 
-    // Source configs are now loaded dynamically from verification_sources table
-    // on each batch iteration (no hardcoded sources)
-
-    // Initialize shared state with empty merkle state
+    // Initialize shared state with empty DashMap for merkle states
+    // Logs will be loaded dynamically from verification_logs table
     let app_state = AppState {
-        merkle_state: Arc::new(parking_lot::RwLock::new(MerkleState::new())),
+        merkle_states: Arc::new(DashMap::new()),
         db_pool: pool,
-        source_configs: vec![], // Loaded dynamically in batch processor
     };
 
     Ok(app_state)
@@ -65,17 +63,8 @@ pub async fn run_server(app_state: AppState) -> Result<()> {
     // Clone the state for the processing task
     let process_state = app_state.clone();
 
-    // Do initial rebuild of the tree now that connection is established
-    println!("Performing initial tree rebuild...");
-    match crate::service::routes::rebuild_tree(&app_state).await {
-        Ok((size, _, last_id)) => {
-            println!(
-                "✅ Initial rebuild complete with {} entries (last_id: {})",
-                size, last_id
-            );
-        }
-        Err(e) => println!("⚠️ Failed to perform initial rebuild: {}", e),
-    }
+    // Rebuild all logs from database on startup to ensure in-memory trees match persistent state
+    crate::service::rebuild_all_logs(&app_state).await?;
     
     // Spawn the batch processing task
     let processor = tokio::spawn(async move {

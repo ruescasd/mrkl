@@ -10,6 +10,7 @@ pub struct Client {
     http_client: HttpClient,
     db_client: tokio_postgres::Client,
     api_base_url: String,
+    default_log_name: String,
 }
 
 impl Client {
@@ -20,8 +21,77 @@ impl Client {
         Ok(())
     }
 
+    /// Gets the current size (number of entries) of the log
+    pub async fn get_log_size(&self) -> Result<usize> {
+        let response = self
+            .http_client
+            .get(&format!("{}/logs/{}/size", self.api_base_url, self.default_log_name))
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        // Check for error response
+        if response["status"].as_str() == Some("error") {
+            return Err(anyhow::anyhow!(
+                "Error getting log size: {}",
+                response["error"].as_str().unwrap_or("unknown error")
+            ));
+        }
+
+        let size = response["size"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("Invalid size response"))?;
+
+        Ok(size as usize)
+    }
+
+    /// Waits until the log reaches the expected size by polling the size endpoint
+    /// This is much more efficient than fixed-duration sleeps
+    /// STRICT: Returns error if size exceeds expected (indicates entries from elsewhere)
+    pub async fn wait_until_log_size(&self, expected_size: usize) -> Result<()> {
+        let start_time = std::time::Instant::now();
+        let timeout = Duration::from_secs(30); // Maximum wait time
+        let poll_interval = Duration::from_millis(100); // Check every 100ms
+
+        loop {
+            let current_size = self.get_log_size().await?;
+            
+            if current_size == expected_size {
+                println!("✅ Log reached expected size: {} (took {:?})", current_size, start_time.elapsed());
+                return Ok(());
+            }
+            
+            if current_size > expected_size {
+                return Err(anyhow::anyhow!(
+                    "❌ Log size mismatch! Expected exactly {}, but got {} (extra {} entries from unknown source). This indicates entries are being processed that weren't tracked by this test.",
+                    expected_size,
+                    current_size,
+                    current_size - expected_size
+                ));
+            }
+
+            if start_time.elapsed() > timeout {
+                return Err(anyhow::anyhow!(
+                    "Timeout waiting for log size. Expected {}, got {} after {:?}",
+                    expected_size,
+                    current_size,
+                    timeout
+                ));
+            }
+
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
+
     /// Creates a new test client that interacts with both the HTTP API and database
+    /// Default log is "test_log_single_source"
     pub async fn new(api_base_url: &str) -> Result<Self> {
+        Self::new_with_log(api_base_url, "test_log_single_source").await
+    }
+
+    /// Creates a new test client with a specific log name
+    pub async fn new_with_log(api_base_url: &str, log_name: &str) -> Result<Self> {
         // Set up HTTP client with reasonable timeouts
         let http_client = HttpClient::builder()
             .timeout(Duration::from_secs(10))
@@ -42,6 +112,7 @@ impl Client {
             http_client,
             db_client,
             api_base_url: api_base_url.to_string(),
+            default_log_name: log_name.to_string(),
         })
     }
 
@@ -49,7 +120,7 @@ impl Client {
     pub async fn get_root(&self) -> Result<Vec<u8>> {
         let response = self
             .http_client
-            .get(&format!("{}/root", self.api_base_url))
+            .get(&format!("{}/logs/{}/root", self.api_base_url, self.default_log_name))
             .send()
             .await?
             .json::<serde_json::Value>()
@@ -88,7 +159,7 @@ impl Client {
         // Make the request with the base64 encoded hash
         let response = self
             .http_client
-            .get(&format!("{}/proof", self.api_base_url))
+            .get(&format!("{}/logs/{}/proof", self.api_base_url, self.default_log_name))
             .query(&query)
             .send()
             .await?;
@@ -115,7 +186,7 @@ impl Client {
 
         let response = self
             .http_client
-            .get(&format!("{}/consistency", self.api_base_url))
+            .get(&format!("{}/logs/{}/consistency", self.api_base_url, self.default_log_name))
             .query(&query)
             .send()
             .await?;
@@ -158,7 +229,7 @@ impl Client {
     pub async fn trigger_rebuild(&self) -> Result<()> {
         let response = self
             .http_client
-            .get(&format!("{}/rebuild", self.api_base_url))
+            .get(&format!("{}/logs/{}/rebuild", self.api_base_url, self.default_log_name))
             .send()
             .await?
             .json::<serde_json::Value>()
@@ -195,40 +266,68 @@ impl Client {
         Ok(row.get(0))
     }
 
-    /// Creates and registers test source tables for verification
-    pub async fn setup_and_register_sources(&self, table_names: &[&str]) -> Result<()> {
-        // Clear any existing source configurations to ensure clean test state
-        self.db_client
-            .execute("DELETE FROM verification_sources", &[])
-            .await?;
-        
-        for table_name in table_names {
-            // Create table
-            self.db_client
-                .batch_execute(&format!(
-                    r#"
-                    CREATE TABLE IF NOT EXISTS {} (
-                        id          BIGSERIAL PRIMARY KEY,
-                        data        TEXT NOT NULL,
-                        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        leaf_hash   BYTEA NOT NULL
-                    );
-                    "#,
-                    table_name
-                ))
-                .await?;
-            
-            // Register in verification_sources
-            self.db_client
+    /// Idempotently sets up test environment with logs and sources
+    /// This can be called multiple times safely - does nothing if already configured
+    pub async fn setup_test_environment(&self) -> Result<()> {
+        // Define our two test logs
+        let logs = vec![
+            ("test_log_single_source", "Log for single-source tests", vec!["source_log"]),
+            ("test_log_multi_source", "Log for multi-source tests", vec!["source_log", "test_source_a", "test_source_b"]),
+        ];
+
+        for (log_name, description, source_tables) in logs {
+            // Create log if it doesn't exist (idempotent)
+            let result = self.db_client
                 .execute(
-                    "INSERT INTO verification_sources (source_table, hash_column, order_column) VALUES ($1, $2, $3)",
-                    &[table_name, &"leaf_hash", &"id"],
+                    "INSERT INTO verification_logs (log_name, description) VALUES ($1, $2) ON CONFLICT (log_name) DO NOTHING",
+                    &[&log_name, &description],
                 )
                 .await?;
             
-            println!("✅ Created and registered '{}'", table_name);
+            if result > 0 {
+                println!("✅ Created log '{}'", log_name);
+            }
+            
+            // Create and register source tables
+            for table_name in source_tables {
+                // Create table if it doesn't exist (idempotent)
+                self.db_client
+                    .batch_execute(&format!(
+                        r#"
+                        CREATE TABLE IF NOT EXISTS {} (
+                            id          BIGSERIAL PRIMARY KEY,
+                            data        TEXT NOT NULL,
+                            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            leaf_hash   BYTEA NOT NULL
+                        );
+                        "#,
+                        table_name
+                    ))
+                    .await?;
+                
+                // Register in verification_sources (idempotent)
+                let result = self.db_client
+                    .execute(
+                        "INSERT INTO verification_sources (source_table, log_name, hash_column, order_column) 
+                         VALUES ($1, $2, $3, $4) 
+                         ON CONFLICT (source_table, log_name) DO NOTHING",
+                        &[&table_name, &log_name, &"leaf_hash", &"id"],
+                    )
+                    .await?;
+                
+                if result > 0 {
+                    println!("✅ Registered '{}' in log '{}'", table_name, log_name);
+                }
+            }
         }
+        
         Ok(())
+    }
+
+    /// Legacy function for backwards compatibility - now calls idempotent setup
+    #[deprecated(note = "Use setup_test_environment() instead")]
+    pub async fn setup_and_register_sources(&self, _table_names: &[&str]) -> Result<()> {
+        self.setup_test_environment().await
     }
 
     pub async fn add_entry_to_source(
@@ -258,11 +357,32 @@ impl Client {
     pub async fn get_sources(&self) -> Result<Vec<tokio_postgres::Row>> {
         let result = self.db_client
         .query(
-            "SELECT source_table, source_id, id FROM merkle_log ORDER BY id",
-            &[],
+            "SELECT source_table, source_id, id FROM merkle_log WHERE log_name = $1 ORDER BY id",
+            &[&self.default_log_name],
         )
         .await?;
 
         Ok(result)
+    }
+
+    /// Diagnostic: Show recent entries for debugging
+    pub async fn show_recent_entries(&self, count: i64) -> Result<()> {
+        let rows = self.db_client
+            .query(
+                "SELECT id, log_name, source_table, source_id FROM merkle_log ORDER BY id DESC LIMIT $1",
+                &[&count],
+            )
+            .await?;
+
+        println!("\n🔍 Last {} entries in merkle_log:", count);
+        for row in rows.iter().rev() {
+            let id: i64 = row.get(0);
+            let log_name: String = row.get(1);
+            let source_table: String = row.get(2);
+            let source_id: i64 = row.get(3);
+            println!("  id={}, log={}, source={}:{}", id, log_name, source_table, source_id);
+        }
+        println!();
+        Ok(())
     }
 }

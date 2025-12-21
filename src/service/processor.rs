@@ -1,5 +1,7 @@
 use anyhow::Result;
 use deadpool_postgres::Object as PooledConnection;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use super::{AppState, SourceConfig};
 use crate::LeafHash;
@@ -13,80 +15,57 @@ struct SourceRow {
     order_value: i64,
 }
 
+/// Composite sorting key that ensures uniqueness by combining order_value with source_table and source_id
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct SortKey {
+    order_value: i64,
+    source_table: String,
+    source_id: i64,
+}
+
+impl SourceRow {
+    fn sort_key(&self) -> SortKey {
+        SortKey {
+            order_value: self.order_value,
+            source_table: self.source_table.clone(),
+            source_id: self.source_id,
+        }
+    }
+}
+
 /// Runs the batch processing loop that moves entries from source tables to merkle_log
-/// and updates the merkle tree state
+/// and updates the merkle tree state for each log
 pub async fn run_batch_processor(app_state: AppState) {
     let batch_size: i64 = 10000;
     let interval = std::time::Duration::from_secs(1);
 
     loop {
-        // Time the copy from source tables to merkle_log
-        let batch_start = std::time::Instant::now();
-
-        // Get the current merkle state and last processed ID
-        let current_last_id = app_state.merkle_state.read().last_processed_id;
-
-        // Copy pending entries into merkle_log
-        let batch_result = copy_source_rows(&app_state, batch_size).await;
-
-        let batch_duration = batch_start.elapsed();
-
-        let Ok(rows_copied) = batch_result else {
-            let err = batch_result.err().unwrap();
-            if !err.to_string().contains("Another processing batch is running") {
-                println!("⚠️ Error processing batch: {}", err);
+        // Load all enabled logs from the database
+        let conn = match app_state.db_pool.get().await {
+            Ok(c) => c,
+            Err(e) => {
+                println!("⚠️ Failed to get connection for loading logs: {}", e);
+                tokio::time::sleep(interval).await;
+                continue;
             }
+        };
+
+        let logs_result = load_enabled_logs(&conn).await;
+        drop(conn); // Release connection before processing
+
+        let Ok(log_names) = logs_result else {
+            println!("⚠️ Failed to load enabled logs: {}", logs_result.err().unwrap());
+            tokio::time::sleep(interval).await;
             continue;
         };
 
-        if rows_copied > 0 {
-            // Time the retrieval from merkle_log
-            let fetch_start = std::time::Instant::now();
-
-            // Query everything after our last known processed ID
-            let conn = app_state.db_pool.get().await.expect("Failed to get connection");
-            let fetch_result = conn
-                .query(
-                    "SELECT id, leaf_hash
-                        FROM merkle_log
-                        WHERE id > $1
-                        ORDER BY id",
-                    &[&current_last_id],
-                )
-                .await;
-
-            let fetch_duration = fetch_start.elapsed();
-
-            let Ok(rows) = fetch_result else {
-                println!("⚠️ Error fetching processed rows: {}", fetch_result.err().unwrap());
-                continue;
-            };
-
-            let leaves_added = rows.len();
-            // Start timing the tree construction
-            let tree_start = std::time::Instant::now();
-
-            // Update the merkle state and maps
-            let mut merkle_state = app_state.merkle_state.write();
-
-            for row in rows {
-                let id: i64 = row.get("id");
-                let hash: Vec<u8> = row.get("leaf_hash");
-                let leaf_hash = LeafHash::new(hash);
-
-                // Update tree and ID atomically
-                merkle_state.update_with_entry(leaf_hash, id);
+        // Process each log independently
+        for log_name in log_names {
+            if let Err(e) = process_log(&app_state, &log_name, batch_size).await {
+                if !e.to_string().contains("Another processing batch is running") {
+                    println!("⚠️ Error processing log '{}': {}", log_name, e);
+                }
             }
-
-            let tree_duration = tree_start.elapsed();
-
-            // Log timing information
-            println!("Batch stats:");
-            println!("  Rows copied: {}", rows_copied);
-            println!("  Leaves added: {}, last processed ID: {}", leaves_added, merkle_state.last_processed_id);
-            println!("  Batch processing time: {:?}", batch_duration);
-            println!("  Fetch from merkle_log time: {:?}", fetch_duration);
-            println!("  Tree construction time: {:?}", tree_duration);
         }
 
         // Wait for next interval
@@ -94,12 +73,177 @@ pub async fn run_batch_processor(app_state: AppState) {
     }
 }
 
-/// Load enabled source configurations from verification_sources table
-async fn load_source_configs(conn: &PooledConnection) -> Result<Vec<SourceConfig>> {
+/// Process a single log: copy rows from source tables to merkle_log and update tree
+async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> Result<()> {
+    // Ensure merkle state exists for this log (create if first time)
+    if !app_state.merkle_states.contains_key(log_name) {
+        app_state.merkle_states.insert(
+            log_name.to_string(),
+            std::sync::Arc::new(parking_lot::RwLock::new(crate::service::MerkleState::new())),
+        );
+    }
+
+    let merkle_state_arc = app_state
+        .merkle_states
+        .get(log_name)
+        .expect("merkle state should exist")
+        .clone();
+
+    // Time the copy from source tables to merkle_log
+    let batch_start = std::time::Instant::now();
+
+    // Get the current merkle state and last processed ID
+    let current_last_id = merkle_state_arc.read().last_processed_id;
+
+    // Copy pending entries into merkle_log
+    let batch_result = copy_source_rows(app_state, log_name, batch_size).await;
+
+    let batch_duration = batch_start.elapsed();
+
+    let Ok(rows_copied) = batch_result else {
+        return Err(batch_result.err().unwrap());
+    };
+
+    if rows_copied > 0 {
+        // Time the retrieval from merkle_log
+        let fetch_start = std::time::Instant::now();
+
+        // Query everything after our last known processed ID for this log
+        let conn = app_state.db_pool.get().await?;
+        let fetch_result = conn
+            .query(
+                "SELECT id, leaf_hash
+                    FROM merkle_log
+                    WHERE log_name = $1 AND id > $2
+                    ORDER BY id",
+                &[&log_name, &current_last_id],
+            )
+            .await;
+
+        let fetch_duration = fetch_start.elapsed();
+
+        let Ok(rows) = fetch_result else {
+            return Err(anyhow::anyhow!("Failed to fetch processed rows: {}", fetch_result.err().unwrap()));
+        };
+
+        let leaves_added = rows.len();
+        // Start timing the tree construction
+        let tree_start = std::time::Instant::now();
+
+        // Update the merkle state and maps
+        let mut merkle_state = merkle_state_arc.write();
+
+        for row in rows {
+            let id: i64 = row.get("id");
+            let hash: Vec<u8> = row.get("leaf_hash");
+            let leaf_hash = LeafHash::new(hash);
+
+            // Update tree and ID atomically
+            merkle_state.update_with_entry(leaf_hash, id);
+        }
+
+        let tree_duration = tree_start.elapsed();
+
+        // Log timing information
+        println!("Batch stats for log '{}':", log_name);
+        println!("  Rows copied: {}", rows_copied);
+        println!("  Leaves added: {}, last processed ID: {}", leaves_added, merkle_state.last_processed_id);
+        println!("  Batch processing time: {:?}", batch_duration);
+        println!("  Fetch from merkle_log time: {:?}", fetch_duration);
+        println!("  Tree construction time: {:?}", tree_duration);
+    }
+
+    Ok(())
+}
+
+/// Load enabled log names from verification_logs table
+async fn load_enabled_logs(conn: &PooledConnection) -> Result<Vec<String>> {
     let rows = conn
         .query(
-            "SELECT source_table, hash_column, order_column FROM verification_sources WHERE enabled = true ORDER BY source_table",
+            "SELECT log_name FROM verification_logs WHERE enabled = true ORDER BY log_name",
             &[],
+        )
+        .await?;
+
+    let log_names: Vec<String> = rows.iter().map(|row| row.get(0)).collect();
+
+    if !log_names.is_empty() {
+        // println!("📋 Loaded {} enabled log(s)", log_names.len());
+    }
+
+    Ok(log_names)
+}
+
+/// Rebuilds all enabled logs from the database on startup
+/// This ensures in-memory trees match persistent state
+pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
+    println!("🔄 Rebuilding all logs from database...");
+    
+    let conn = app_state.db_pool.get().await?;
+    let log_names = load_enabled_logs(&conn).await?;
+    drop(conn);
+    
+    if log_names.is_empty() {
+        println!("✅ No logs to rebuild");
+        return Ok(());
+    }
+    
+    for log_name in &log_names {
+        rebuild_log(app_state, log_name).await?;
+    }
+    
+    println!("✅ Rebuilt {} log(s)", log_names.len());
+    Ok(())
+}
+
+/// Rebuilds a single log's merkle tree from the database
+async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
+    let conn = app_state.db_pool.get().await?;
+    
+    // Fetch all entries for this log
+    let rows = conn
+        .query(
+            "SELECT id, leaf_hash FROM merkle_log WHERE log_name = $1 ORDER BY id",
+            &[&log_name],
+        )
+        .await?;
+    
+    if rows.is_empty() {
+        println!("  📋 Log '{}': 0 entries", log_name);
+        return Ok(());
+    }
+    
+    // Create new merkle state
+    let mut merkle_state = crate::service::MerkleState::new();
+    
+    for row in rows {
+        let id: i64 = row.get(0);
+        let hash: Vec<u8> = row.get(1);
+        let leaf_hash = LeafHash::new(hash);
+        merkle_state.update_with_entry(leaf_hash, id);
+    }
+    
+    // Store in DashMap
+    let merkle_state_arc = std::sync::Arc::new(parking_lot::RwLock::new(merkle_state));
+    let tree_size = merkle_state_arc.read().tree.len();
+    let last_id = merkle_state_arc.read().last_processed_id;
+    
+    app_state.merkle_states.insert(log_name.to_string(), merkle_state_arc);
+    
+    println!("  📋 Log '{}': {} entries (last_id: {})", log_name, tree_size, last_id);
+    
+    Ok(())
+}
+
+/// Load enabled source configurations from verification_sources table for a specific log
+async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<Vec<SourceConfig>> {
+    let rows = conn
+        .query(
+            "SELECT source_table, hash_column, order_column, log_name 
+             FROM verification_sources 
+             WHERE enabled = true AND log_name = $1 
+             ORDER BY source_table",
+            &[&log_name],
         )
         .await?;
 
@@ -108,11 +252,12 @@ async fn load_source_configs(conn: &PooledConnection) -> Result<Vec<SourceConfig
         let table_name: String = row.get(0);
         let hash_column: String = row.get(1);
         let order_column: String = row.get(2);
-        configs.push(SourceConfig::new(&table_name, &hash_column, &order_column));
+        let log_name: String = row.get(3);
+        configs.push(SourceConfig::new(&table_name, &hash_column, &order_column, &log_name));
     }
 
     if !configs.is_empty() {
-        println!("📋 Loaded {} source config(s) from verification_sources", configs.len());
+        // println!("📋 Loaded {} source config(s) for log '{}'", configs.len(), log_name);
     }
 
     Ok(configs)
@@ -143,14 +288,14 @@ async fn validate_source_tables(conn: &PooledConnection, configs: &[SourceConfig
     Ok(valid_configs)
 }
 
-/// Process a batch of rows from configured source tables into merkle_log
+/// Process a batch of rows from configured source tables into merkle_log for a specific log
 /// Returns the number of rows processed
-async fn copy_source_rows(app_state: &AppState, batch_size: i64) -> Result<i64> {
+async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64) -> Result<i64> {
     // Get connection from pool
     let mut conn = app_state.db_pool.get().await?;
 
-    // Load source configurations from database
-    let source_configs = load_source_configs(&conn).await?;
+    // Load source configurations from database for this log
+    let source_configs = load_source_configs(&conn, log_name).await?;
 
     // If no sources configured, nothing to do
     if source_configs.is_empty() {
@@ -168,21 +313,22 @@ async fn copy_source_rows(app_state: &AppState, batch_size: i64) -> Result<i64> 
     // Start transaction
     let txn = conn.transaction().await?;
 
-    // Advisory lock prevents concurrent execution (defensive for multi-instance deployments)
-    // Note: Currently single-process, so lock has no effect, but kept for future-proofing
+    // Advisory lock prevents concurrent execution for this specific log
+    // Use log name to generate unique lock ID
+    let lock_id = hash_string_to_i64(log_name);
     let lock_acquired: bool = txn
         .query_one(
-            "SELECT pg_try_advisory_xact_lock(hashtext('process_batch'))",
-            &[],
+            "SELECT pg_try_advisory_xact_lock($1)",
+            &[&lock_id],
         )
         .await?
         .get(0);
 
     if !lock_acquired {
-        return Err(anyhow::anyhow!("Another processing batch is running"));
+        return Err(anyhow::anyhow!("Another processing batch is running for log '{}'", log_name));
     }
 
-    // Get next available ID in merkle_log
+    // Get next available ID in merkle_log (globally unique across all logs)
     let next_id: i64 = txn
         .query_one("SELECT COALESCE(MAX(id), 0) + 1 FROM merkle_log", &[])
         .await?
@@ -192,11 +338,11 @@ async fn copy_source_rows(app_state: &AppState, batch_size: i64) -> Result<i64> 
     let mut all_source_rows = Vec::new();
 
     for source_config in valid_configs.iter() {
-        // Get last processed source_id for this specific source table
+        // Get last processed source_id for this specific source table in this log
         let last_processed: i64 = txn
             .query_one(
-                "SELECT COALESCE(MAX(source_id), 0) FROM merkle_log WHERE source_table = $1",
-                &[&source_config.table_name],
+                "SELECT COALESCE(MAX(source_id), 0) FROM merkle_log WHERE log_name = $1 AND source_table = $2",
+                &[&log_name, &source_config.table_name],
             )
             .await?
             .get(0);
@@ -226,8 +372,8 @@ async fn copy_source_rows(app_state: &AppState, batch_size: i64) -> Result<i64> 
         }
     }
 
-    // Sort all rows by order_value to maintain global ordering
-    all_source_rows.sort_by_key(|r| r.order_value);
+    // Sort all rows by composite key (order_value, source_table, source_id) to ensure unique ordering
+    all_source_rows.sort_by_key(|r| r.sort_key());
 
     // Limit to batch_size after merging
     all_source_rows.truncate(batch_size as usize);
@@ -239,8 +385,8 @@ async fn copy_source_rows(app_state: &AppState, batch_size: i64) -> Result<i64> 
         let merkle_id = next_id + offset as i64;
         
         txn.execute(
-            "INSERT INTO merkle_log (id, source_table, source_id, leaf_hash) VALUES ($1, $2, $3, $4)",
-            &[&merkle_id, &source_row.source_table, &source_row.source_id, &source_row.leaf_hash],
+            "INSERT INTO merkle_log (id, log_name, source_table, source_id, leaf_hash) VALUES ($1, $2, $3, $4, $5)",
+            &[&merkle_id, &log_name, &source_row.source_table, &source_row.source_id, &source_row.leaf_hash],
         )
         .await?;
     }
@@ -249,4 +395,11 @@ async fn copy_source_rows(app_state: &AppState, batch_size: i64) -> Result<i64> 
     txn.commit().await?;
 
     Ok(rows_inserted)
+}
+
+/// Hash a string to i64 for use as advisory lock ID
+fn hash_string_to_i64(s: &str) -> i64 {
+    let mut hasher = DefaultHasher::new();
+    s.hash(&mut hasher);
+    hasher.finish() as i64
 }

@@ -7,18 +7,30 @@ use serial_test::serial;
 async fn setup_client() -> Result<Client> {
     // Load environment variables from .env file
     dotenv::dotenv().ok();
-    Client::new("http://localhost:3000").await
+    let client = Client::new("http://localhost:3000").await?;
+    // Idempotent setup - safe to call multiple times
+    client.setup_test_environment().await?;
+    Ok(client)
+}
+
+async fn setup_client_multi_source() -> Result<Client> {
+    dotenv::dotenv().ok();
+    let client = Client::new_with_log("http://localhost:3000", "test_log_multi_source").await?;
+    client.setup_test_environment().await?;
+    Ok(client)
 }
 
 #[ignore]
 #[serial]
 #[tokio::test]
 async fn test_inclusion_proofs() -> Result<()> {
-
     let client = setup_client().await?;
-    client.setup_and_register_sources(&["source_log"]).await?;
 
     use sha2::{Digest, Sha256};
+
+    // Get initial log size (may not be 0 if tests ran before)
+    let initial_size = client.get_log_size().await?;
+    println!("📊 Initial log size: {}", initial_size);
 
     // Add several entries
     let entries = vec!["data1", "data2", "data3", "data4", "data5"];
@@ -34,10 +46,17 @@ async fn test_inclusion_proofs() -> Result<()> {
         client.add_entry(entry).await?;
     }
 
-    // Wait for all entries to be processed
-    println!("Waiting for entries to be processed...");
-    client.wait_for_processing().await?;
-    println!("✅ Sleep complete");
+    // Wait until all entries are processed
+    let expected_size = initial_size + entries.len();
+    println!("⏳ Waiting for log to reach size {}...", expected_size);
+    match client.wait_until_log_size(expected_size).await {
+        Ok(_) => {},
+        Err(e) => {
+            // Show diagnostic info on failure
+            client.show_recent_entries(20).await?;
+            return Err(e);
+        }
+    }
 
     // Get the current root
     let root = client.get_root().await?;
@@ -74,8 +93,11 @@ async fn test_inclusion_proofs() -> Result<()> {
 #[tokio::test]
 async fn test_consistency_proofs() -> Result<()> {
     let client = setup_client().await?;
-    client.setup_and_register_sources(&["source_log"]).await?;
     let mut historical_roots = Vec::new();
+
+    // Track current size for efficient waiting
+    let mut current_size = client.get_log_size().await?;
+    println!("📊 Initial log size: {}", current_size);
 
     // Add entries and store intermediate roots
     for i in 0..3 {
@@ -87,8 +109,9 @@ async fn test_consistency_proofs() -> Result<()> {
             client.add_entry(&entry).await?;
 
             // Wait for this single entry to be processed
-            println!("Waiting for entry {}-{} to be processed...", i + 1, j + 1);
-            client.wait_for_processing().await?;
+            current_size += 1;
+            println!("⏳ Waiting for entry {}-{} (size {})...", i + 1, j + 1, current_size);
+            client.wait_until_log_size(current_size).await?;
             
             // Store root after each entry
             let root = client.get_root().await?;
@@ -108,7 +131,8 @@ async fn test_consistency_proofs() -> Result<()> {
     // Add a final entry to change the tree state
     let entry = format!("last");
     client.add_entry(&entry).await?;
-    client.wait_for_processing().await?;
+    current_size += 1;
+    client.wait_until_log_size(current_size).await?;
 
     // Get final tree state
     let final_root = client.get_root().await?;
@@ -138,11 +162,13 @@ async fn test_consistency_proofs() -> Result<()> {
 #[serial]
 #[tokio::test]
 async fn test_burst_operations() -> Result<()> {
-
     use sha2::{Digest, Sha256};
 
     let client = setup_client().await?;
-    client.setup_and_register_sources(&["source_log"]).await?;
+
+    // Get initial log size
+    let initial_size = client.get_log_size().await?;
+    println!("📊 Initial log size: {}", initial_size);
 
     // Create a batch of entries and calculate their hashes
     let entries: Vec<String> = (1..=10).map(|i| format!("burst-entry-{}", i)).collect();
@@ -161,8 +187,10 @@ async fn test_burst_operations() -> Result<()> {
         client.add_entry(entry).await?;
     }
 
-    // Give the system a moment to process all entries
-    client.wait_for_processing().await?;
+    // Wait until all entries are processed
+    let expected_size = initial_size + entries.len();
+    println!("⏳ Waiting for log to reach size {}...", expected_size);
+    client.wait_until_log_size(expected_size).await?;
 
     // Get final root
     let root = client.get_root().await?;
@@ -197,8 +225,11 @@ async fn test_large_batch_performance() -> Result<()> {
     use sha2::{Digest, Sha256};
 
     let client = setup_client().await?;
-    client.setup_and_register_sources(&["source_log"]).await?;
     let num_entries = 10_000;
+
+    // Get initial log size
+    let initial_size = client.get_log_size().await?;
+    println!("📊 Initial log size: {}", initial_size);
 
     println!(
         "🔥 Starting performance test with {} entries...",
@@ -244,8 +275,9 @@ async fn test_large_batch_performance() -> Result<()> {
     }
 
     // Wait for final processing and get root
-    println!("\n⏳ Waiting for all entries to be processed...");
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let expected_size = initial_size + num_entries;
+    println!("\n⏳ Waiting for log to reach size {}...", expected_size);
+    client.wait_until_log_size(expected_size).await?;
 
     // Get and verify final root
     let root = client.get_root().await?;
@@ -283,11 +315,12 @@ async fn test_large_batch_performance() -> Result<()> {
 #[serial]
 #[tokio::test]
 async fn test_source_log_setup() -> Result<()> {
+    // Use the multi-source log for this test
+    let client = setup_client_multi_source().await?;
 
-    // Create and register all test sources
-    let all_sources = ["source_log", "test_source_a", "test_source_b"];
-    let client = setup_client().await?;
-    client.setup_and_register_sources(&all_sources).await?;
+    // Get initial size
+    let initial_size = client.get_log_size().await?;
+    println!("📊 Initial log size: {}", initial_size);
 
     // Add entries to all three sources with interleaved timing
     println!("\n📝 Adding entries to multiple sources...");
@@ -298,31 +331,25 @@ async fn test_source_log_setup() -> Result<()> {
     client.add_entry_to_source("test_source_a", "entry-a-2").await?;
     println!("✅ Added 5 entries across 3 source tables");
 
-    // Wait for batch processor
-    println!("\n⏳ Waiting for batch processor (3 seconds)...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    // Wait for batch processor to process all entries
+    let expected_size = initial_size + 5;
+    println!("\n⏳ Waiting for log to reach size {}...", expected_size);
+    client.wait_until_log_size(expected_size).await?;
 
     // Verify entries were processed into merkle_log from all sources
     let rows = client.get_sources().await?;
 
-    println!("\n📊 Processed entries in merkle_log:");
-    for row in &rows {
-        let source_table: String = row.get(0);
-        let source_id: i64 = row.get(1);
-        let merkle_id: i64 = row.get(2);
-        println!("  merkle_id={}, source={}:{}", merkle_id, source_table, source_id);
-    }
-
     assert!(rows.len() >= 5, "Should have processed at least 5 entries");
     
-    // Verify sequential merkle_log IDs
-    let expected_start = if rows.len() > 5 { rows.len() - 5 } else { 0 };
-    for (idx, row) in rows.iter().skip(expected_start).enumerate() {
-        let merkle_id: i64 = row.get(2);
-        assert_eq!(
-            merkle_id,
-            (expected_start + idx + 1) as i64,
-            "Merkle log IDs should be sequential"
+    // Verify merkle_log IDs are strictly increasing (monotonic)
+    // They won't be sequential (1,2,3...) because the ID sequence is shared across all logs
+    for i in 1..rows.len() {
+        let prev_id: i64 = rows[i-1].get(2);
+        let curr_id: i64 = rows[i].get(2);
+        assert!(
+            curr_id > prev_id,
+            "Merkle log IDs should be strictly increasing: {} should be > {}",
+            curr_id, prev_id
         );
     }
     
@@ -334,7 +361,7 @@ async fn test_source_log_setup() -> Result<()> {
             .collect::<std::collections::HashSet<_>>()
             .len()
     );
-    println!("   - Sequential merkle_log IDs verified");
+    println!("   - Merkle log IDs are strictly increasing");
     println!("   - Phase 1 validation: SUCCESS! ✨");
     
     Ok(())
