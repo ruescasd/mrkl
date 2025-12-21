@@ -1,13 +1,15 @@
 // cargo test --test basic -- --include-ignored --nocapture
 use anyhow::Result;
 use base64::Engine;
-use mrkl::service::Client;
 use serial_test::serial;
 
-async fn setup_client() -> Result<Client> {
+mod test_client;
+use test_client::TestClient;
+
+async fn setup_client() -> Result<TestClient> {
     // Load environment variables from .env file
     dotenv::dotenv().ok();
-    let client = Client::new("http://localhost:3000").await?;
+    let client = TestClient::new("http://localhost:3000").await?;
     // Idempotent setup - safe to call multiple times
     client.setup_test_environment().await?;
     Ok(client)
@@ -22,7 +24,7 @@ async fn test_inclusion_proofs() -> Result<()> {
     use sha2::{Digest, Sha256};
 
     // Get initial log size (may not be 0 if tests ran before)
-    let initial_size = client.get_log_size("test_log_single_source").await?;
+    let initial_size = client.client.get_log_size("test_log_single_source").await?;
     println!("📊 Initial log size: {}", initial_size);
 
     // Add several entries
@@ -52,11 +54,11 @@ async fn test_inclusion_proofs() -> Result<()> {
     }
 
     // Get the current root
-    let root = client.get_root("test_log_single_source").await?;
+    let root = client.client.get_root("test_log_single_source").await?;
 
     // Verify inclusion proofs for all entries using their hashes
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
-        let proof = client.get_inclusion_proof("test_log_single_source", entry).await?;
+        let proof = client.client.get_inclusion_proof("test_log_single_source", entry).await?;
 
         // Verify proof has correct root
         assert_eq!(
@@ -89,7 +91,7 @@ async fn test_consistency_proofs() -> Result<()> {
     let mut historical_roots = Vec::new();
 
     // Track current size for efficient waiting
-    let mut current_size = client.get_log_size("test_log_single_source").await?;
+    let mut current_size = client.client.get_log_size("test_log_single_source").await?;
     println!("📊 Initial log size: {}", current_size);
 
     // Add entries and store intermediate roots
@@ -107,7 +109,7 @@ async fn test_consistency_proofs() -> Result<()> {
             client.wait_until_log_size("test_log_single_source", current_size).await?;
             
             // Store root after each entry
-            let root = client.get_root("test_log_single_source").await?;
+            let root = client.client.get_root("test_log_single_source").await?;
             println!(
                 "📸 Storing intermediate root after entry {}-{}",
                 i + 1,
@@ -128,14 +130,14 @@ async fn test_consistency_proofs() -> Result<()> {
     client.wait_until_log_size("test_log_single_source", current_size).await?;
 
     // Get final tree state
-    let final_root = client.get_root("test_log_single_source").await?;
+    let final_root = client.client.get_root("test_log_single_source").await?;
 
     // Verify consistency between each historical root and final state
     for (i, historical_root) in historical_roots.iter().enumerate() {
         println!("🔍 Verifying consistency with batch {}", i + 1);
         assert!(
             client
-                .verify_tree_consistency("test_log_single_source", historical_root.clone())
+                .client.verify_tree_consistency("test_log_single_source", historical_root.clone())
                 .await?,
             "Tree should be consistent with historical root from batch {}",
             i + 1
@@ -144,7 +146,7 @@ async fn test_consistency_proofs() -> Result<()> {
 
     println!("🔍 Consistency of root with itself should fail");
     assert!(
-        client.verify_tree_consistency("test_log_single_source", final_root).await.is_err(),
+        client.client.verify_tree_consistency("test_log_single_source", final_root).await.is_err(),
         "Consistency of root with itself should fail"
     );
 
@@ -160,7 +162,7 @@ async fn test_burst_operations() -> Result<()> {
     let client = setup_client().await?;
 
     // Get initial log size
-    let initial_size = client.get_log_size("test_log_single_source").await?;
+    let initial_size = client.client.get_log_size("test_log_single_source").await?;
     println!("📊 Initial log size: {}", initial_size);
 
     // Create a batch of entries and calculate their hashes
@@ -186,7 +188,7 @@ async fn test_burst_operations() -> Result<()> {
     client.wait_until_log_size("test_log_single_source", expected_size).await?;
 
     // Get final root
-    let root = client.get_root("test_log_single_source").await?;
+    let root = client.client.get_root("test_log_single_source").await?;
     println!(
         "🌳 Final merkle root after burst: {}",
         base64::engine::general_purpose::STANDARD.encode(&root)
@@ -194,7 +196,7 @@ async fn test_burst_operations() -> Result<()> {
 
     // Verify all entries are properly included using their hashes
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
-        let proof = client.get_inclusion_proof("test_log_single_source", entry).await?;
+        let proof = client.client.get_inclusion_proof("test_log_single_source", entry).await?;
         assert_eq!(
             root, proof.root,
             "Merkle root mismatch for entry: {}",
@@ -221,7 +223,7 @@ async fn test_large_batch_performance() -> Result<()> {
     let num_entries = 10_000;
 
     // Get initial log size
-    let initial_size = client.get_log_size("test_log_single_source").await?;
+    let initial_size = client.client.get_log_size("test_log_single_source").await?;
     println!("📊 Initial log size: {}", initial_size);
 
     println!(
@@ -273,7 +275,7 @@ async fn test_large_batch_performance() -> Result<()> {
     client.wait_until_log_size("test_log_single_source", expected_size).await?;
 
     // Get and verify final root
-    let root = client.get_root("test_log_single_source").await?;
+    let root = client.client.get_root("test_log_single_source").await?;
 
     println!(
         "Final root: {}",
@@ -292,7 +294,7 @@ async fn test_large_batch_performance() -> Result<()> {
 
     for idx in sample_indices {
         let (entry, hash) = &all_hashes[idx];
-        let proof = client.get_inclusion_proof("test_log_single_source", entry).await?;
+        let proof = client.client.get_inclusion_proof("test_log_single_source", entry).await?;
         assert!(
             proof.verify(hash)?,
             "Proof verification failed for entry: {}",
@@ -312,7 +314,7 @@ async fn test_source_log_setup() -> Result<()> {
     let client = setup_client().await?;
 
     // Get initial size
-    let initial_size = client.get_log_size("test_log_multi_source").await?;
+    let initial_size = client.client.get_log_size("test_log_multi_source").await?;
     println!("📊 Initial log size: {}", initial_size);
 
     // Add entries to all three sources with interleaved timing
@@ -369,7 +371,7 @@ async fn test_universal_ordering() -> Result<()> {
     println!("\n🧪 Testing universal ordering with mixed timestamp/non-timestamp sources");
     
     // Get initial log size
-    let initial_size = client.get_log_size("test_log_multi_source").await?;
+    let initial_size = client.client.get_log_size("test_log_multi_source").await?;
     println!("📊 Initial log size: {}", initial_size);
     
     // Insert entries sequentially - timestamped sources will get increasing timestamps automatically
@@ -400,11 +402,11 @@ async fn test_universal_ordering() -> Result<()> {
     // Step 4: Get inclusion proofs to determine exact ordering
     println!("\n🔍 Checking entry positions in the tree:");
     
-    let proof1 = client.get_inclusion_proof("test_log_multi_source", "entry_t1").await?;
-    let proof2 = client.get_inclusion_proof("test_log_multi_source", "entry_t2").await?;
-    let proof3 = client.get_inclusion_proof("test_log_multi_source", "entry_t3").await?;
-    let proof4 = client.get_inclusion_proof("test_log_multi_source", "entry_no_ts_1").await?;
-    let proof5 = client.get_inclusion_proof("test_log_multi_source", "entry_no_ts_2").await?;
+    let proof1 = client.client.get_inclusion_proof("test_log_multi_source", "entry_t1").await?;
+    let proof2 = client.client.get_inclusion_proof("test_log_multi_source", "entry_t2").await?;
+    let proof3 = client.client.get_inclusion_proof("test_log_multi_source", "entry_t3").await?;
+    let proof4 = client.client.get_inclusion_proof("test_log_multi_source", "entry_no_ts_1").await?;
+    let proof5 = client.client.get_inclusion_proof("test_log_multi_source", "entry_no_ts_2").await?;
     
     println!("  entry_t1 (timestamped, source_log:{}): index {}", id1, proof1.index);
     println!("  entry_t2 (timestamped, test_source_a:{}): index {}", id2, proof2.index);
@@ -479,7 +481,7 @@ async fn test_no_timestamp_ordering() -> Result<()> {
     println!("\n🧪 Testing ordering with ONLY non-timestamped sources (no timestamps at all)");
     
     // Get initial log size
-    let initial_size = client.get_log_size("test_log_no_timestamp").await?;
+    let initial_size = client.client.get_log_size("test_log_no_timestamp").await?;
     println!("📊 Initial log size: {}", initial_size);
     
     // Insert entries with specific ids to test ordering
@@ -510,10 +512,10 @@ async fn test_no_timestamp_ordering() -> Result<()> {
     // Get inclusion proofs to determine exact ordering
     println!("\n🔍 Checking entry positions in the tree:");
     
-    let proof1 = client.get_inclusion_proof("test_log_no_timestamp", "entry_b_1").await?;
-    let proof2 = client.get_inclusion_proof("test_log_no_timestamp", "entry_a_1").await?;
-    let proof3 = client.get_inclusion_proof("test_log_no_timestamp", "entry_b_2").await?;
-    let proof4 = client.get_inclusion_proof("test_log_no_timestamp", "entry_a_2").await?;
+    let proof1 = client.client.get_inclusion_proof("test_log_no_timestamp", "entry_b_1").await?;
+    let proof2 = client.client.get_inclusion_proof("test_log_no_timestamp", "entry_a_1").await?;
+    let proof3 = client.client.get_inclusion_proof("test_log_no_timestamp", "entry_b_2").await?;
+    let proof4 = client.client.get_inclusion_proof("test_log_no_timestamp", "entry_a_2").await?;
     
     println!("  entry_b_1 (source_no_timestamp_b:{}): index {}", id1, proof1.index);
     println!("  entry_a_1 (source_no_timestamp:{}): index {}", id2, proof2.index);
