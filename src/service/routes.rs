@@ -94,7 +94,6 @@ pub async fn get_inclusion_proof(
     query_result: Result<Query<InclusionQuery>, axum::extract::rejection::QueryRejection>,
     State(state): State<AppState>,
 ) -> JsonResponse {
-
     // Handle query parameter parsing errors
     let Query(query) = match query_result {
         Ok(query) => query,
@@ -259,5 +258,3 @@ pub mod proof_bytes_format {
         })
     }
 }
-
-

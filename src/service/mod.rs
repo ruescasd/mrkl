@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use dashmap::DashMap;
+use std::sync::Arc;
 
 pub mod client;
 pub mod processor;
@@ -10,8 +10,8 @@ pub mod state;
 pub use client::Client;
 pub use processor::rebuild_all_logs;
 pub use routes::{
-    ConsistencyQuery, InclusionQuery, get_consistency_proof,
-    get_inclusion_proof, get_log_size, get_merkle_root,
+    ConsistencyQuery, InclusionQuery, get_consistency_proof, get_inclusion_proof, get_log_size,
+    get_merkle_root,
 };
 pub use server::{create_server, initialize_app_state, run_server};
 pub use state::MerkleState;
@@ -34,11 +34,11 @@ pub struct SourceConfig {
 impl SourceConfig {
     /// Creates a new source configuration
     pub fn new(
-        table_name: impl Into<String>, 
-        hash_column: impl Into<String>, 
-        id_column: impl Into<String>, 
+        table_name: impl Into<String>,
+        hash_column: impl Into<String>,
+        id_column: impl Into<String>,
         timestamp_column: Option<String>,
-        log_name: impl Into<String>
+        log_name: impl Into<String>,
     ) -> Self {
         Self {
             table_name: table_name.into(),

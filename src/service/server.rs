@@ -1,9 +1,9 @@
 use anyhow::Result;
 use axum::{Json, Router, http::StatusCode, routing::get};
-use std::net::SocketAddr;
-use std::sync::Arc;
 use dashmap::DashMap;
 use deadpool_postgres::{Config, ManagerConfig, RecyclingMethod, Runtime};
+use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio_postgres::NoTls;
 
 use super::AppState;
@@ -26,8 +26,14 @@ pub fn create_server(app_state: AppState) -> Router {
     Router::new()
         .route("/logs/:log_name/root", get(crate::service::get_merkle_root))
         .route("/logs/:log_name/size", get(crate::service::get_log_size))
-        .route("/logs/:log_name/proof", get(crate::service::get_inclusion_proof))
-        .route("/logs/:log_name/consistency", get(crate::service::get_consistency_proof))
+        .route(
+            "/logs/:log_name/proof",
+            get(crate::service::get_inclusion_proof),
+        )
+        .route(
+            "/logs/:log_name/consistency",
+            get(crate::service::get_consistency_proof),
+        )
         .with_state(app_state)
         .fallback(handle_unmatched)
 }
@@ -37,14 +43,14 @@ pub async fn initialize_app_state() -> Result<AppState> {
     println!("Connecting to database...");
 
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    
+
     // Parse connection string into deadpool config
     let mut cfg = Config::new();
     cfg.url = Some(db_url);
     cfg.manager = Some(ManagerConfig {
         recycling_method: RecyclingMethod::Fast,
     });
-    
+
     // Create connection pool
     let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls)?;
 
@@ -65,7 +71,7 @@ pub async fn run_server(app_state: AppState) -> Result<()> {
 
     // Rebuild all logs from database on startup to ensure in-memory trees match persistent state
     crate::service::rebuild_all_logs(&app_state).await?;
-    
+
     // Spawn the batch processing task
     let processor = tokio::spawn(async move {
         crate::service::processor::run_batch_processor(process_state).await;

@@ -11,8 +11,8 @@ pub mod tree;
 
 // Re-export service layer components
 pub use service::{
-    AppState, ConsistencyQuery, InclusionQuery, MerkleState,
-    get_consistency_proof, get_inclusion_proof, get_log_size, get_merkle_root,
+    AppState, ConsistencyQuery, InclusionQuery, MerkleState, get_consistency_proof,
+    get_inclusion_proof, get_log_size, get_merkle_root,
 };
 
 /// A wrapper around a merkle consistency proof that proves one tree is a prefix of another

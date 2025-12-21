@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use deadpool_postgres::Object as PooledConnection;
-use std::collections::{hash_map::DefaultHasher, BTreeSet};
+use std::collections::{BTreeSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
 use super::{AppState, SourceConfig};
@@ -31,12 +31,11 @@ impl Ord for SourceRow {
         // Secondary: source_id (guaranteed unique per table)
         // Tertiary: source_table (for complete determinism)
         match (&self.order_timestamp, &other.order_timestamp) {
-            (Some(a), Some(b)) => {
-                a.cmp(b)
-                    .then_with(|| self.source_id.cmp(&other.source_id))
-                    .then_with(|| self.source_table.cmp(&other.source_table))
-            }
-            (Some(_), None) => std::cmp::Ordering::Less,  // Timestamped entries come first
+            (Some(a), Some(b)) => a
+                .cmp(b)
+                .then_with(|| self.source_id.cmp(&other.source_id))
+                .then_with(|| self.source_table.cmp(&other.source_table)),
+            (Some(_), None) => std::cmp::Ordering::Less, // Timestamped entries come first
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => {
                 // Both have no timestamp, sort by id then table
@@ -75,7 +74,10 @@ pub async fn run_batch_processor(app_state: AppState) {
         drop(conn); // Release connection before processing
 
         let Ok(log_names) = logs_result else {
-            println!("⚠️ Failed to load enabled logs: {}", logs_result.err().unwrap());
+            println!(
+                "⚠️ Failed to load enabled logs: {}",
+                logs_result.err().unwrap()
+            );
             tokio::time::sleep(interval).await;
             continue;
         };
@@ -83,7 +85,10 @@ pub async fn run_batch_processor(app_state: AppState) {
         // Process each log independently
         for log_name in log_names {
             if let Err(e) = process_log(&app_state, &log_name, batch_size).await {
-                if !e.to_string().contains("Another processing batch is running") {
+                if !e
+                    .to_string()
+                    .contains("Another processing batch is running")
+                {
                     println!("⚠️ Error processing log '{}': {}", log_name, e);
                 }
             }
@@ -144,7 +149,10 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
         let fetch_duration = fetch_start.elapsed();
 
         let Ok(rows) = fetch_result else {
-            return Err(anyhow::anyhow!("Failed to fetch processed rows: {}", fetch_result.err().unwrap()));
+            return Err(anyhow::anyhow!(
+                "Failed to fetch processed rows: {}",
+                fetch_result.err().unwrap()
+            ));
         };
 
         let leaves_added = rows.len();
@@ -168,7 +176,10 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
         // Log timing information
         println!("Batch stats for log '{}':", log_name);
         println!("  Rows copied: {}", rows_copied);
-        println!("  Leaves added: {}, last processed ID: {}", leaves_added, merkle_state.last_processed_id);
+        println!(
+            "  Leaves added: {}, last processed ID: {}",
+            leaves_added, merkle_state.last_processed_id
+        );
         println!("  Batch processing time: {:?}", batch_duration);
         println!("  Fetch from merkle_log time: {:?}", fetch_duration);
         println!("  Tree construction time: {:?}", tree_duration);
@@ -199,20 +210,20 @@ async fn load_enabled_logs(conn: &PooledConnection) -> Result<Vec<String>> {
 /// This ensures in-memory trees match persistent state
 pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
     println!("🔄 Rebuilding all logs from database...");
-    
+
     let conn = app_state.db_pool.get().await?;
     let log_names = load_enabled_logs(&conn).await?;
     drop(conn);
-    
+
     if log_names.is_empty() {
         println!("✅ No logs to rebuild");
         return Ok(());
     }
-    
+
     for log_name in &log_names {
         rebuild_log(app_state, log_name).await?;
     }
-    
+
     println!("✅ Rebuilt {} log(s)", log_names.len());
     Ok(())
 }
@@ -220,7 +231,7 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
 /// Rebuilds a single log's merkle tree from the database
 async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
     let conn = app_state.db_pool.get().await?;
-    
+
     // Fetch all entries for this log
     let rows = conn
         .query(
@@ -228,31 +239,36 @@ async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
             &[&log_name],
         )
         .await?;
-    
+
     if rows.is_empty() {
         println!("  📋 Log '{}': 0 entries", log_name);
         return Ok(());
     }
-    
+
     // Create new merkle state
     let mut merkle_state = crate::service::MerkleState::new();
-    
+
     for row in rows {
         let id: i64 = row.get(0);
         let hash: Vec<u8> = row.get(1);
         let leaf_hash = LeafHash::new(hash);
         merkle_state.update_with_entry(leaf_hash, id);
     }
-    
+
     // Store in DashMap
     let merkle_state_arc = std::sync::Arc::new(parking_lot::RwLock::new(merkle_state));
     let tree_size = merkle_state_arc.read().tree.len();
     let last_id = merkle_state_arc.read().last_processed_id;
-    
-    app_state.merkle_states.insert(log_name.to_string(), merkle_state_arc);
-    
-    println!("  📋 Log '{}': {} entries (last_id: {})", log_name, tree_size, last_id);
-    
+
+    app_state
+        .merkle_states
+        .insert(log_name.to_string(), merkle_state_arc);
+
+    println!(
+        "  📋 Log '{}': {} entries (last_id: {})",
+        log_name, tree_size, last_id
+    );
+
     Ok(())
 }
 
@@ -275,7 +291,13 @@ async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<
         let id_column: String = row.get(2);
         let timestamp_column: Option<String> = row.get(3);
         let log_name: String = row.get(4);
-        configs.push(SourceConfig::new(&table_name, &hash_column, &id_column, timestamp_column, &log_name));
+        configs.push(SourceConfig::new(
+            &table_name,
+            &hash_column,
+            &id_column,
+            timestamp_column,
+            &log_name,
+        ));
     }
 
     if !configs.is_empty() {
@@ -287,9 +309,12 @@ async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<
 
 /// Validate that all configured source tables exist
 /// Returns only the configs for tables that actually exist
-async fn validate_source_tables(conn: &PooledConnection, configs: &[SourceConfig]) -> Result<Vec<SourceConfig>> {
+async fn validate_source_tables(
+    conn: &PooledConnection,
+    configs: &[SourceConfig],
+) -> Result<Vec<SourceConfig>> {
     let mut valid_configs = Vec::new();
-    
+
     for config in configs {
         // Check if table exists in database
         let exists: bool = conn
@@ -303,10 +328,13 @@ async fn validate_source_tables(conn: &PooledConnection, configs: &[SourceConfig
         if exists {
             valid_configs.push(config.clone());
         } else {
-            println!("⚠️ Skipping configured source '{}' - table does not exist", config.table_name);
+            println!(
+                "⚠️ Skipping configured source '{}' - table does not exist",
+                config.table_name
+            );
         }
     }
-    
+
     Ok(valid_configs)
 }
 
@@ -326,12 +354,12 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
 
     // Filter to only tables that actually exist (skip missing tables with warning)
     let valid_configs = validate_source_tables(&conn, &source_configs).await?;
-    
+
     // If no valid sources after filtering, nothing to do
     if valid_configs.is_empty() {
         return Ok(0);
     }
-    
+
     // Start transaction
     let txn = conn.transaction().await?;
 
@@ -339,15 +367,15 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
     // Use log name to generate unique lock ID
     let lock_id = hash_string_to_i64(log_name);
     let lock_acquired: bool = txn
-        .query_one(
-            "SELECT pg_try_advisory_xact_lock($1)",
-            &[&lock_id],
-        )
+        .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&lock_id])
         .await?
         .get(0);
 
     if !lock_acquired {
-        return Err(anyhow::anyhow!("Another processing batch is running for log '{}'", log_name));
+        return Err(anyhow::anyhow!(
+            "Another processing batch is running for log '{}'",
+            log_name
+        ));
     }
 
     // Get next available ID in merkle_log (globally unique across all logs)
@@ -396,7 +424,8 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
         for row in rows {
             let source_id: i64 = row.get(0);
             let leaf_hash: Vec<u8> = row.get(1);
-            let order_timestamp: Option<DateTime<Utc>> = if source_config.timestamp_column.is_some() {
+            let order_timestamp: Option<DateTime<Utc>> = if source_config.timestamp_column.is_some()
+            {
                 row.get(2)
             } else {
                 None
@@ -412,14 +441,17 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
     }
 
     // BTreeSet automatically maintains sorted order, limit to batch_size after merging
-    let rows_to_insert: Vec<_> = all_source_rows.into_iter().take(batch_size as usize).collect();
+    let rows_to_insert: Vec<_> = all_source_rows
+        .into_iter()
+        .take(batch_size as usize)
+        .collect();
 
     // Insert into merkle_log with sequential IDs
     let rows_inserted = rows_to_insert.len() as i64;
-    
+
     for (offset, source_row) in rows_to_insert.iter().enumerate() {
         let merkle_id = next_id + offset as i64;
-        
+
         txn.execute(
             "INSERT INTO merkle_log (id, log_name, source_table, source_id, leaf_hash) VALUES ($1, $2, $3, $4, $5)",
             &[&merkle_id, &log_name, &source_row.source_table, &source_row.source_id, &source_row.leaf_hash],

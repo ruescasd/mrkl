@@ -24,7 +24,7 @@ impl Client {
             api_base_url: api_base_url.to_string(),
         })
     }
-    
+
     /// Gets the current size (number of entries) of the log
     pub async fn get_log_size(&self, log_name: &str) -> Result<usize> {
         let response = self
@@ -115,12 +115,19 @@ impl Client {
     }
 
     /// Gets a consistency proof proving that the current tree state is consistent with an older root hash
-    pub async fn get_consistency_proof(&self, log_name: &str, old_root: Vec<u8>) -> Result<ConsistencyProof> {
+    pub async fn get_consistency_proof(
+        &self,
+        log_name: &str,
+        old_root: Vec<u8>,
+    ) -> Result<ConsistencyProof> {
         let query = crate::service::ConsistencyQuery { old_root };
 
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/consistency", self.api_base_url, log_name))
+            .get(&format!(
+                "{}/logs/{}/consistency",
+                self.api_base_url, log_name
+            ))
             .query(&query)
             .send()
             .await?;
@@ -158,6 +165,4 @@ impl Client {
             .verify()
             .map_err(|e| anyhow::anyhow!("Proof verification failed: {}", e))
     }
-
-
 }

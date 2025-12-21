@@ -40,9 +40,29 @@ impl TestClient {
         // Define our test logs
         // Format: (log_name, description, [(source_table, has_timestamp)])
         let logs: Vec<(&str, &str, Vec<(&str, bool)>)> = vec![
-            ("test_log_single_source", "Log for single-source tests", vec![("source_log", true)]),
-            ("test_log_multi_source", "Log for multi-source tests", vec![("source_log", true), ("test_source_a", true), ("test_source_b", true), ("source_no_timestamp", false)]),
-            ("test_log_no_timestamp", "Log for testing sources without timestamps", vec![("source_no_timestamp", false), ("source_no_timestamp_b", false)]),
+            (
+                "test_log_single_source",
+                "Log for single-source tests",
+                vec![("source_log", true)],
+            ),
+            (
+                "test_log_multi_source",
+                "Log for multi-source tests",
+                vec![
+                    ("source_log", true),
+                    ("test_source_a", true),
+                    ("test_source_b", true),
+                    ("source_no_timestamp", false),
+                ],
+            ),
+            (
+                "test_log_no_timestamp",
+                "Log for testing sources without timestamps",
+                vec![
+                    ("source_no_timestamp", false),
+                    ("source_no_timestamp_b", false),
+                ],
+            ),
         ];
 
         for (log_name, description, source_configs) in logs {
@@ -53,11 +73,11 @@ impl TestClient {
                     &[&log_name, &description],
                 )
                 .await?;
-            
+
             if result > 0 {
                 println!("✅ Created log '{}'", log_name);
             }
-            
+
             // Create and register source tables
             for (table_name, has_timestamp) in source_configs {
                 // Create table if it doesn't exist (idempotent)
@@ -85,13 +105,15 @@ impl TestClient {
                         table_name
                     )
                 };
-                
-                self.db_client
-                    .batch_execute(&create_table_sql)
-                    .await?;
-                
+
+                self.db_client.batch_execute(&create_table_sql).await?;
+
                 // Register in verification_sources (idempotent)
-                let timestamp_column = if has_timestamp { Some("created_at") } else { None };
+                let timestamp_column = if has_timestamp {
+                    Some("created_at")
+                } else {
+                    None
+                };
                 let result = self.db_client
                     .execute(
                         "INSERT INTO verification_sources (source_table, log_name, hash_column, id_column, timestamp_column) 
@@ -100,13 +122,16 @@ impl TestClient {
                         &[&table_name, &log_name, &"leaf_hash", &"id", &timestamp_column],
                     )
                     .await?;
-                
+
                 if result > 0 {
-                    println!("✅ Registered '{}' in log '{}' (timestamp: {})", table_name, log_name, has_timestamp);
+                    println!(
+                        "✅ Registered '{}' in log '{}' (timestamp: {})",
+                        table_name, log_name, has_timestamp
+                    );
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -135,7 +160,8 @@ impl TestClient {
         hasher.update(data.as_bytes());
         let hash_result = hasher.finalize();
 
-        let row = self.db_client
+        let row = self
+            .db_client
             .query_one(
                 &format!(
                     "INSERT INTO {} (data, leaf_hash) VALUES ($1, $2) RETURNING id",
@@ -177,7 +203,10 @@ impl TestClient {
             let log_name: String = row.get(1);
             let source_table: String = row.get(2);
             let source_id: i64 = row.get(3);
-            println!("  id={}, log={}, source={}:{}", id, log_name, source_table, source_id);
+            println!(
+                "  id={}, log={}, source={}:{}",
+                id, log_name, source_table, source_id
+            );
         }
         println!();
         Ok(())
@@ -195,12 +224,16 @@ impl TestClient {
 
         loop {
             let current_size = self.client.get_log_size(log_name).await?;
-            
+
             if current_size == expected_size {
-                println!("✅ Log reached expected size: {} (took {:?})", current_size, start_time.elapsed());
+                println!(
+                    "✅ Log reached expected size: {} (took {:?})",
+                    current_size,
+                    start_time.elapsed()
+                );
                 return Ok(());
             }
-            
+
             if current_size > expected_size {
                 return Err(anyhow::anyhow!(
                     "❌ Log size mismatch! Expected exactly {}, but got {} (extra {} entries from unknown source). This indicates entries are being processed that weren't tracked by this test.",
