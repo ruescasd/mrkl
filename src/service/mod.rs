@@ -6,6 +6,7 @@ pub mod processor;
 pub mod routes;
 pub mod server;
 pub mod state;
+pub mod validation;
 
 pub use client::Client;
 pub use processor::rebuild_all_logs;
@@ -15,6 +16,7 @@ pub use routes::{
 };
 pub use server::{create_server, initialize_app_state, run_server};
 pub use state::MerkleState;
+pub use validation::{validate_all_logs, print_validation_report, LogValidation};
 
 /// Configuration for a source table that feeds into the merkle log
 #[derive(Debug, Clone)]

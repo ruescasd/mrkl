@@ -7,6 +7,30 @@ use std::hash::{Hash, Hasher};
 use super::{AppState, SourceConfig};
 use crate::LeafHash;
 
+/// CRITICAL ARCHITECTURAL NOTE: merkle_log is GROUND TRUTH
+///
+/// The ordering committed to merkle_log cannot be reconstructed deterministically from source tables alone.
+/// This is because:
+///
+/// 1. **Batch boundaries matter**: Entries are sorted within each batch, not globally. The same entry might
+///    end up at different positions depending on when batches run.
+///
+///    Example: Entry X (no timestamp) with 9 timestamped entries in batch 1 → X at position 10
+///             Same 20 entries in one batch → X at position 20 (after all 19 timestamped entries)
+///
+/// 2. **Late arrivals**: An entry with timestamp T1 might arrive AFTER entries with T2, T3 (T2 > T1).
+///    Once T2, T3 are committed to the merkle tree, we cannot retroactively insert T1 before them.
+///
+/// 3. **Ordering is a point-in-time commitment**: When processing a batch, we commit to "these are all
+///    the entries we know about right now, in this order." Future entries might logically belong earlier,
+///    but they weren't available yet.
+///
+/// Therefore:
+/// - Startup rebuild from merkle_log IS deterministic (correct behavior)
+/// - Rebuild from source tables is NOT deterministic (would produce different merkle roots)
+/// - merkle_log must be backed up and preserved for disaster recovery
+/// - This is correct behavior for append-only transparency logs
+///
 /// Represents a row from a source table ready to be inserted into merkle_log
 /// Implements Ord for universal ordering: (timestamp, id, table_name)
 #[derive(Debug, Clone, Eq)]
@@ -213,6 +237,31 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
 
     let conn = app_state.db_pool.get().await?;
     let log_names = load_enabled_logs(&conn).await?;
+
+    // Validate all source configurations and report issues
+    println!("🔍 Validating source configurations...");
+    let validations = crate::service::validate_all_logs(&conn).await?;
+    
+    for validation in &validations {
+        if !validation.enabled {
+            continue; // Skip disabled logs
+        }
+
+        let invalid_sources: Vec<_> = validation.sources.iter()
+            .filter(|s| !s.is_valid())
+            .collect();
+
+        if !invalid_sources.is_empty() {
+            println!("⚠️  Log '{}' has {} invalid source(s):", validation.log_name, invalid_sources.len());
+            for source in invalid_sources {
+                for error in source.errors() {
+                    println!("   - {}: {}", source.source_table, error);
+                }
+            }
+        }
+    }
+    println!("✅ Validation complete\n");
+
     drop(conn);
 
     if log_names.is_empty() {

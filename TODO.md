@@ -78,7 +78,13 @@
 **Critical Issues**:
 
 **Infrastructure Tasks**:
-- [ ] Error handling: What happens when source table doesn't exist or has wrong schema?
+- [x] Error handling: What happens when source table doesn't exist or has wrong schema?
+  - Implemented comprehensive validation module (validation.rs)
+  - `--verify-db` flag for pre-deployment/operational checks with detailed reporting (cargo run --bin main -- --verify-db)
+  - Startup validation warns about invalid sources without blocking service
+  - Runtime resilience: skips invalid sources, continues processing valid ones
+  - Validates table existence, column existence, and column types (id: bigint/integer, hash: bytea, timestamp: timestamp)
+- [ ] Error handling: failed proofs vs leaf not yet present (add endpoint to check if leaf exists?)
 - [ ] Monitoring: Metrics for processor lag, batch sizes, processing time per log
 - [ ] Graceful shutdown: Stop processor cleanly, wait for in-flight batches
 - [ ] Health check endpoint: /health with database connectivity check
@@ -123,10 +129,28 @@
 **Key Invariants**:
 1. No gaps in merkle_log.id sequence **globally** (per-log may have gaps from other logs)
 2. Tree only updated from committed merkle_log data
-3. merkle_log is ground truth (always rebuildable)
+3. **merkle_log is ground truth and CANNOT be reconstructed deterministically from source tables**
+   - Batch boundaries create different orderings depending on when batches run
+   - Late-arriving entries with earlier timestamps cannot be retroactively inserted
+   - Same source data produces different merkle roots depending on batching pattern
+   - Therefore: merkle_log must be preserved and backed up for disaster recovery
 4. Batch processor holds advisory lock per log during processing
 5. All database writes happen in batch processor only
 6. id_column must be unique per source table (typically primary key or unique constraint)
+
+**Why merkle_log Cannot Be Rebuilt from Sources**:
+
+Example demonstrating non-determinism:
+- Scenario 1 (Two batches): 9 timestamped entries + X (no timestamp) → X at position 10
+  Then 10 more timestamped entries in batch 2 → positions 11-20
+  Result: X is at position 10
+
+- Scenario 2 (One batch): Same 20 entries processed together
+  All 19 timestamped entries come first → positions 1-19, X at position 20
+  Result: X is at position 20
+
+Same data, different merkle roots. This is correct behavior for append-only logs where ordering
+is a point-in-time commitment based on what entries are known when the batch runs.
 
 **Ordering Strategy**:
 - Universal ordering key: (Option<DateTime<Utc>>, source_id, source_table)
