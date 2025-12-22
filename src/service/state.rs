@@ -36,4 +36,15 @@ impl MerkleState {
         self.tree.push(hash);
         self.last_processed_id = id;
     }
+
+    
+    // for the moment we must checkpoint after each addition,
+    // because in a rebuild scenario we do not know which roots have been published
+    // these checkpoints are currently part of update_with_entry, and
+    // cannot yet be called separately.
+    /*
+    /// Set a root checkpoint for the current tree state
+     pub fn root_checkpoint(&mut self) {
+        self.tree.root_checkpoint();
+    }*/
 }

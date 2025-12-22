@@ -92,6 +92,75 @@ async fn test_inclusion_proofs() -> Result<()> {
 #[ignore]
 #[serial]
 #[tokio::test]
+async fn test_has_leaf_and_has_root() -> Result<()> {
+    let client = setup_client().await?;
+
+    println!("\n🧪 Testing has_leaf and has_root endpoints...");
+
+    // Get initial state
+    let initial_size = client.client.get_log_size("test_log_single_source").await?;
+    let initial_root = if initial_size > 0 {
+        Some(client.client.get_root("test_log_single_source").await?)
+    } else {
+        None
+    };
+
+    // Add test entries
+    println!("➕ Adding test entries...");
+    client.add_entry("has_test_1").await?;
+    client.add_entry("has_test_2").await?;
+
+    // Wait for processing
+    let expected_size = initial_size + 2;
+    client
+        .wait_until_log_size("test_log_single_source", expected_size)
+        .await?;
+
+    // Test has_leaf - should find our entries
+    println!("\n🔍 Testing has_leaf...");
+    let has_leaf1 = client.client.has_leaf("test_log_single_source", "has_test_1").await?;
+    assert!(has_leaf1, "has_test_1 should exist in the tree");
+    println!("   ✓ has_test_1 exists: {}", has_leaf1);
+
+    let has_leaf2 = client.client.has_leaf("test_log_single_source", "has_test_2").await?;
+    assert!(has_leaf2, "has_test_2 should exist in the tree");
+    println!("   ✓ has_test_2 exists: {}", has_leaf2);
+
+    // Test has_leaf - should not find non-existent entry
+    let has_nonexistent = client.client.has_leaf("test_log_single_source", "nonexistent_entry").await?;
+    assert!(!has_nonexistent, "nonexistent_entry should not exist in the tree");
+    println!("   ✓ nonexistent_entry exists: {}", has_nonexistent);
+
+    // Test has_root - check if initial root exists (if we had one)
+    println!("\n🔍 Testing has_root...");
+    if let Some(old_root) = initial_root {
+        let has_old_root = client.client.has_root("test_log_single_source", old_root.clone()).await?;
+        assert!(has_old_root, "Old root should exist in root history");
+        println!("   ✓ Old root exists: {}", has_old_root);
+    } else {
+        println!("   ⏩ Skipping old root check (started with empty tree)");
+    }
+
+    // Test has_root - check current root
+    let current_root = client.client.get_root("test_log_single_source").await?;
+    let has_current_root = client.client.has_root("test_log_single_source", current_root).await?;
+    assert!(has_current_root, "Current root should exist");
+    println!("   ✓ Current root exists: {}", has_current_root);
+
+    // Test has_root - check non-existent root
+    let fake_root = vec![9u8; 32];
+    let has_fake_root = client.client.has_root("test_log_single_source", fake_root).await?;
+    assert!(!has_fake_root, "Fake root should not exist");
+    println!("   ✓ Fake root exists: {}", has_fake_root);
+
+    println!("\n✅ has_leaf and has_root tests complete!");
+
+    Ok(())
+}
+
+#[ignore]
+#[serial]
+#[tokio::test]
 async fn test_consistency_proofs() -> Result<()> {
     let client = setup_client().await?;
     let mut historical_roots = Vec::new();
@@ -705,4 +774,3 @@ async fn test_no_timestamp_ordering() -> Result<()> {
 
     Ok(())
 }
-

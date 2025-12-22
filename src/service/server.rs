@@ -17,7 +17,7 @@ pub fn create_server(app_state: AppState) -> Router {
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "status": "error",
-                "error": "Route not found. Available endpoints: /logs/{log_name}/root, /logs/{log_name}/size, /logs/{log_name}/proof, /logs/{log_name}/consistency"
+                "error": "Route not found. Available endpoints: /logs/{log_name}/root, /logs/{log_name}/size, /logs/{log_name}/proof, /logs/{log_name}/consistency, /logs/{log_name}/has_leaf, /logs/{log_name}/has_root"
             })),
         )
     }
@@ -34,6 +34,8 @@ pub fn create_server(app_state: AppState) -> Router {
             "/logs/:log_name/consistency",
             get(crate::service::get_consistency_proof),
         )
+        .route("/logs/:log_name/has_leaf", get(crate::service::has_leaf))
+        .route("/logs/:log_name/has_root", get(crate::service::has_root))
         .with_state(app_state)
         .fallback(handle_unmatched)
 }

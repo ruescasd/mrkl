@@ -84,15 +84,41 @@
   - Startup validation warns about invalid sources without blocking service
   - Runtime resilience: skips invalid sources, continues processing valid ones
   - Validates table existence, column existence, and column types (id: bigint/integer, hash: bytea, timestamp: timestamp)
-- [ ] Error handling: failed proofs vs leaf not yet present (add endpoint to check if leaf exists?)
+- [x] Check if leaf/root exists
+  - Implemented `GET /logs/{log_name}/has_leaf?hash=<base64>` endpoint
+  - Implemented `GET /logs/{log_name}/has_root?root=<base64>` endpoint
+  - Both endpoints return `{"status": "ok", "log_name": "...", "exists": true/false}`
+  - O(1) lookups via index map (has_leaf) and root history map (has_root)
+  - Client methods: `has_leaf(log_name, data)` and `has_root(log_name, root)`
+  - Use cases: Check before requesting proofs, polling for entry processing, validating historical roots
+- [X] Empty tree handling. These are the responses for our endpoints on an empty tree
+    1️⃣ Testing GET /root with empty tree...
+      ✗ Error: Error getting root: Merkle tree for log 'test_log_single_source' is empty
+    2️⃣ Testing GET /size with empty tree...
+      ✓ Got size: 0
+    3️⃣ Testing GET /proof with empty tree...
+      ✗ Error: Error getting inclusion proof: Failed to generate inclusion proof: LeafNotFound
+    4️⃣ Testing GET /consistency with empty tree...
+      ✗ Error: Error getting consistency proof: Failed to generate consistency proof: ProofError: RootNotFound
+- [X] Uniform error handling
+  - Created responses.rs module with structured response types
+  - Implemented `ApiResponse<T>` enum with `Success(T)` and `Error` variants using `#[serde(tag = "status")]`
+  - Implemented `ApiError` enum with typed error cases: `LogNotFound`, `EmptyTree`, `InvalidRequest`, `ProofGenerationFailed`, `ProofVerificationFailed`
+  - Created endpoint-specific response structs: `RootResponse`, `SizeResponse`, `InclusionProofResponse`, `ConsistencyProofResponse`, `HasLeafResponse`, `HasRootResponse`
+  - All responses follow consistent JSON structure with `"status": "ok"` or `"status": "error"`
+  - Replaced all ad-hoc `json!()` macros in route handlers
+  - Proper HTTP status codes: 200 OK for success, 400 Bad Request for errors
+  - Backward compatible with existing client code
 - [ ] Monitoring: Metrics for processor lag, batch sizes, processing time per log
 - [ ] Graceful shutdown: Stop processor cleanly, wait for in-flight batches
 - [ ] Health check endpoint: /health with database connectivity check
 - [ ] Log management API: Create/disable logs without database access
 - [ ] Performance tuning: Configurable batch sizes and intervals per log
-- [ ] Handle empty root case when merkle tree is empty (See routes::get_merkle_root), this root won't be in the root_hash_to_size map but it may have been returned from get_merkle_root
+
+
 - [ ] ct-merkle expects data to be passed in which will be hashed, but we want to pass already computed hashes, the current implementation will be hashing our supplied hashes again
 - [ ] investigate postgresql for merkle_log (partitions on the log_name seem a good idea)
+- [ ] it may not be necessary to store all intermediate roots in the root_hash_to_size field, we only need to store those roots that are published, it may also be possible to store trees entirely for these reduced number of published roots, which may be better than the rewind function, which reconstructs entire trees from scratch (rewind is used for proofs on arbitrary roots). UPDATE: in a rebuild scenario we do not know which roots have been published, we cannot do this naively
 
 **Documentation**:
 - [ ] Deployment guide (environment variables, database setup)

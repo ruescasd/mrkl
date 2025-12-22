@@ -48,6 +48,17 @@ impl CtMerkleTree {
         self.leaf_hash_to_index
             .insert(leaf.hash.clone(), idx.try_into().unwrap());
         self.tree.push(leaf);
+        // for the moment we must checkpoint after each addition,
+        // because in a rebuild scenario we do not know which roots have been published
+        self.root_checkpoint();
+    }
+
+    // for the moment we must checkpoint after each addition,
+    // because in a rebuild scenario we do not know which roots have been published
+    // these checkpoints are currently part of update_with_entry, and
+    // cannot yet be called separately.
+    /// Set a root checkpoint for the current tree state
+    fn root_checkpoint(&mut self) {
         let root = self.tree.root();
         self.root_hash_to_size.insert(
             root.as_bytes().to_vec(),

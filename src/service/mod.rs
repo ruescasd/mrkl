@@ -1,5 +1,6 @@
 pub mod client;
 pub mod processor;
+pub mod responses;
 pub mod routes;
 pub mod server;
 pub mod state;
@@ -7,9 +8,13 @@ pub mod validation;
 
 pub use client::Client;
 pub use processor::rebuild_all_logs;
+pub use responses::{
+    ApiError, ApiResponse, ConsistencyProofResponse, HasLeafResponse, HasRootResponse,
+    InclusionProofResponse, RootResponse, SizeResponse,
+};
 pub use routes::{
-    ConsistencyQuery, InclusionQuery, get_consistency_proof, get_inclusion_proof, get_log_size,
-    get_merkle_root,
+    ConsistencyQuery, HasLeafQuery, HasRootQuery, InclusionQuery, get_consistency_proof,
+    get_inclusion_proof, get_log_size, get_merkle_root, has_leaf, has_root,
 };
 pub use server::{create_server, initialize_app_state, run_server};
 pub use state::MerkleState;

@@ -118,6 +118,7 @@ pub async fn run_batch_processor(app_state: AppState) {
     let interval = std::time::Duration::from_secs(1);
 
     loop {
+        
         // Load all enabled logs from the database
         let conn = match app_state.db_pool.get().await {
             Ok(c) => c,
@@ -140,6 +141,9 @@ pub async fn run_batch_processor(app_state: AppState) {
             continue;
         };
 
+        
+        let now = std::time::Instant::now();
+        let log_names_clone = log_names.clone();
         // Process each log independently
         for log_name in log_names {
             if let Err(e) = process_log(&app_state, &log_name, batch_size).await {
@@ -151,7 +155,9 @@ pub async fn run_batch_processor(app_state: AppState) {
                 }
             }
         }
-
+        let elapsed = now.elapsed();
+        let fraction = elapsed.as_secs_f64() / interval.as_secs_f64();
+        println!("🔄 cycle for logs {:?}, {:?} ({:.2})", log_names_clone, elapsed, fraction);
         // Wait for next interval
         tokio::time::sleep(interval).await;
     }
@@ -228,6 +234,10 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
             // Update tree and ID atomically
             merkle_state.update_with_entry(leaf_hash, id);
         }
+        // for the moment we must checkpoint after each addition,
+        // because in a rebuild scenario we do not know which roots have been published
+        // these checkpoints are currently part of update_with_entry
+        // merkle_state.root_checkpoint();
 
         let tree_duration = tree_start.elapsed();
 
@@ -446,6 +456,10 @@ async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
         let leaf_hash = LeafHash::new(hash);
         merkle_state.update_with_entry(leaf_hash, id);
     }
+    // for the moment we must checkpoint after each addition,
+    // because in a rebuild scenario we do not know which roots have been published
+    // these checkpoints are currently part of update_with_entry
+    // merkle_state.root_checkpoint();
 
     // Store in DashMap
     let merkle_state_arc = std::sync::Arc::new(parking_lot::RwLock::new(merkle_state));

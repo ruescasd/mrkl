@@ -63,7 +63,7 @@ impl Client {
         // Check for error response
         if response["status"].as_str() == Some("error") {
             return Err(anyhow::anyhow!(
-                "Error getting proof: {}",
+                "Error getting root: {}",
                 response["error"].as_str().unwrap_or("unknown error")
             ));
         }
@@ -104,7 +104,7 @@ impl Client {
         // Check for error response
         if response["status"].as_str() == Some("error") {
             return Err(anyhow::anyhow!(
-                "Error getting proof: {}",
+                "Error getting inclusion proof: {}",
                 response["error"].as_str().unwrap_or("unknown error")
             ));
         }
@@ -164,5 +164,72 @@ impl Client {
         proof
             .verify()
             .map_err(|e| anyhow::anyhow!("Proof verification failed: {}", e))
+    }
+
+    /// Checks if a leaf (identified by its hash) exists in the log
+    pub async fn has_leaf(&self, log_name: &str, data: &str) -> Result<bool> {
+        // Compute the hash from the data
+        let mut hasher = Sha256::new();
+        hasher.update(data.as_bytes());
+        let hash_result = hasher.finalize();
+
+        let query = crate::service::HasLeafQuery {
+            hash: hash_result.to_vec(),
+        };
+
+        // Make the request
+        let response = self
+            .http_client
+            .get(&format!("{}/logs/{}/has_leaf", self.api_base_url, log_name))
+            .query(&query)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        // Check for error response
+        if response["status"].as_str() == Some("error") {
+            return Err(anyhow::anyhow!(
+                "Error checking leaf existence: {}",
+                response["error"].as_str().unwrap_or("unknown error")
+            ));
+        }
+
+        // Extract exists field
+        let exists = response["exists"]
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("Invalid has_leaf response"))?;
+
+        Ok(exists)
+    }
+
+    /// Checks if a historical root exists in the log
+    pub async fn has_root(&self, log_name: &str, root: Vec<u8>) -> Result<bool> {
+        let query = crate::service::HasRootQuery { root };
+
+        // Make the request
+        let response = self
+            .http_client
+            .get(&format!("{}/logs/{}/has_root", self.api_base_url, log_name))
+            .query(&query)
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        // Check for error response
+        if response["status"].as_str() == Some("error") {
+            return Err(anyhow::anyhow!(
+                "Error checking root existence: {}",
+                response["error"].as_str().unwrap_or("unknown error")
+            ));
+        }
+
+        // Extract exists field
+        let exists = response["exists"]
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("Invalid has_root response"))?;
+
+        Ok(exists)
     }
 }
