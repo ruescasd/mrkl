@@ -36,6 +36,7 @@ pub fn create_server(app_state: AppState) -> Router {
         )
         .route("/logs/:log_name/has_leaf", get(crate::service::has_leaf))
         .route("/logs/:log_name/has_root", get(crate::service::has_root))
+        .route("/metrics", get(crate::service::routes::metrics))
         .with_state(app_state)
         .fallback(handle_unmatched)
 }
@@ -61,6 +62,7 @@ pub async fn initialize_app_state() -> Result<AppState> {
     let app_state = AppState {
         merkle_states: Arc::new(DashMap::new()),
         db_pool: pool,
+        metrics: Arc::new(crate::service::metrics::Metrics::new()),
     };
 
     Ok(app_state)

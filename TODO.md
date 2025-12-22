@@ -109,16 +109,18 @@
   - Replaced all ad-hoc `json!()` macros in route handlers
   - Proper HTTP status codes: 200 OK for success, 400 Bad Request for errors
   - Backward compatible with existing client code
-- [ ] Monitoring: Metrics for processor lag, batch sizes, processing time per log
+- [ ] Performance
+    - [ ] Monitoring: Metrics for processor lag, batch sizes, processing time per log
+    - [ ] Minimize lock contention (RwLock on MerkleState): Batch processor currently holds write lock during entire batch processing cycle, blocking all HTTP read requests. Optimize to hold write lock ONLY during in-memory tree updates (`tree.push()`), not during database I/O. Pattern: fetch from DB (no lock) → process entries (no lock) → acquire write lock → update tree → release immediately → continue DB work. This requires measuring first to establish baseline.
+    - [ ] Minimize PostgreSQL lock contention on source tables: Batch processor reads from external application's source tables. Optimize our side: use READ COMMITTED isolation, short-lived read transactions, index-optimized queries (WHERE id > last_processed_id), tunable batch sizes. Document guidelines for external applications: proper indexing on id_column (PK/unique required), batch inserts preferred over individual inserts, avoid long-running transactions. PostgreSQL MVCC advantages: SELECT generally doesn't block INSERT (non-blocking reads), row-level locking. This is a shared responsibility between our plugin design and external application behavior.
+    - [ ] It may not be necessary to store all intermediate roots in the root_hash_to_size field, we only need to store those roots that are published, it may also be possible to store trees entirely for these reduced number of published roots, which may be better than the rewind function, which reconstructs entire trees from scratch (rewind is used for proofs on arbitrary roots). UPDATE: in a rebuild scenario we do not know which roots have been published, we cannot do this naively
+    - [ ] investigate postgresql for merkle_log (partitions on the log_name seem a good idea)
+    - [ ] ct-merkle expects data to be passed in which will be hashed, but we want to pass already computed hashes, the current implementation will be hashing our supplied hashes again
+    - [ ] Configurable batch sizes and intervals per log
 - [ ] Graceful shutdown: Stop processor cleanly, wait for in-flight batches
 - [ ] Health check endpoint: /health with database connectivity check
 - [ ] Log management API: Create/disable logs without database access
-- [ ] Performance tuning: Configurable batch sizes and intervals per log
 
-
-- [ ] ct-merkle expects data to be passed in which will be hashed, but we want to pass already computed hashes, the current implementation will be hashing our supplied hashes again
-- [ ] investigate postgresql for merkle_log (partitions on the log_name seem a good idea)
-- [ ] it may not be necessary to store all intermediate roots in the root_hash_to_size field, we only need to store those roots that are published, it may also be possible to store trees entirely for these reduced number of published roots, which may be better than the rewind function, which reconstructs entire trees from scratch (rewind is used for proofs on arbitrary roots). UPDATE: in a rebuild scenario we do not know which roots have been published, we cannot do this naively
 
 **Documentation**:
 - [ ] Deployment guide (environment variables, database setup)

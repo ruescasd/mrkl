@@ -1,4 +1,5 @@
 pub mod client;
+pub mod metrics;
 pub mod processor;
 pub mod responses;
 pub mod routes;
@@ -10,7 +11,8 @@ pub use client::Client;
 pub use processor::rebuild_all_logs;
 pub use responses::{
     ApiError, ApiResponse, ConsistencyProofResponse, HasLeafResponse, HasRootResponse,
-    InclusionProofResponse, RootResponse, SizeResponse,
+    InclusionProofResponse, RootResponse, SizeResponse, MetricsResponse,
+    LogMetricsResponse, GlobalMetricsResponse,
 };
 pub use routes::{
     ConsistencyQuery, HasLeafQuery, HasRootQuery, InclusionQuery, get_consistency_proof,

@@ -2,6 +2,8 @@ use crate::{LeafHash, tree::CtMerkleTree};
 use dashmap::DashMap;
 use std::sync::Arc;
 
+use crate::service::metrics::Metrics;
+
 /// Shared state between HTTP server and periodic processor
 #[derive(Clone)]
 pub struct AppState {
@@ -10,6 +12,8 @@ pub struct AppState {
     pub merkle_states: Arc<DashMap<String, Arc<parking_lot::RwLock<MerkleState>>>>,
     /// Database connection pool for operations that need it
     pub db_pool: deadpool_postgres::Pool,
+    /// Processing metrics for monitoring and diagnostics
+    pub metrics: Arc<Metrics>,
 }
 
 /// A combined state holding the merkle tree and its corresponding last processed ID.

@@ -4,6 +4,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::{ConsistencyProof, InclusionProof};
 
@@ -133,4 +134,33 @@ pub struct HasLeafResponse {
 pub struct HasRootResponse {
     pub log_name: String,
     pub exists: bool,
+}
+
+/// Per-log metrics snapshot
+#[derive(Debug, Serialize)]
+pub struct LogMetricsResponse {
+    pub last_batch_rows: u64,
+    pub last_batch_leaves: u64,
+    pub last_copy_source_rows_ms: u64,
+    pub last_fetch_merkle_log_ms: u64,
+    pub last_tree_update_ms: u64,
+    pub total_batches: u64,
+    pub tree_size: u64,
+    pub tree_memory_bytes: u64,
+    pub last_update: String,
+}
+
+/// Global metrics snapshot
+#[derive(Debug, Serialize)]
+pub struct GlobalMetricsResponse {
+    pub last_cycle_duration_ms: u64,
+    pub last_active_log_count: usize,
+    pub last_cycle_fraction: f64,
+}
+
+/// Response for GET /metrics
+#[derive(Debug, Serialize)]
+pub struct MetricsResponse {
+    pub logs: HashMap<String, LogMetricsResponse>,
+    pub global: GlobalMetricsResponse,
 }

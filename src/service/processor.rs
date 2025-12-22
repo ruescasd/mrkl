@@ -141,11 +141,9 @@ pub async fn run_batch_processor(app_state: AppState) {
             continue;
         };
 
-        
         let now = std::time::Instant::now();
-        let log_names_clone = log_names.clone();
         // Process each log independently
-        for log_name in log_names {
+        for log_name in log_names.clone() {
             if let Err(e) = process_log(&app_state, &log_name, batch_size).await {
                 if !e
                     .to_string()
@@ -156,8 +154,12 @@ pub async fn run_batch_processor(app_state: AppState) {
             }
         }
         let elapsed = now.elapsed();
-        let fraction = elapsed.as_secs_f64() / interval.as_secs_f64();
-        println!("🔄 cycle for logs {:?}, {:?} ({:.2})", log_names_clone, elapsed, fraction);
+        
+        // Update global metrics
+        app_state.metrics.update_global_metrics(|global| {
+            global.record_cycle(elapsed.as_millis() as u64, log_names.len(), &interval);
+        });
+        
         // Wait for next interval
         tokio::time::sleep(interval).await;
     }
@@ -241,16 +243,34 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
 
         let tree_duration = tree_start.elapsed();
 
-        // Log timing information
-        println!("Batch stats for log '{}':", log_name);
-        println!("  Rows copied: {}", rows_copied);
-        println!(
-            "  Leaves added: {}, last processed ID: {}",
-            leaves_added, merkle_state.last_processed_id
-        );
-        println!("  Batch processing time: {:?}", batch_duration);
-        println!("  Fetch from merkle_log time: {:?}", fetch_duration);
-        println!("  Tree construction time: {:?}", tree_duration);
+        // Update metrics for this log
+        let final_tree_size = merkle_state.tree.len() as u64;
+        drop(merkle_state); // Release lock before metrics update
+        
+        app_state.metrics.update_log_metrics(log_name, |log_metrics| {
+            log_metrics.record_batch(
+                rows_copied as u64,
+                leaves_added as u64,
+                batch_duration.as_millis() as u64,
+                fetch_duration.as_millis() as u64,
+                tree_duration.as_millis() as u64,
+                final_tree_size,
+            );
+        });
+
+    } else {
+        // Update metrics even when no rows copied (caught up)
+        let tree_size = merkle_state_arc.read().tree.len() as u64;
+        app_state.metrics.update_log_metrics(log_name, |log_metrics| {
+            log_metrics.record_batch(
+                0,
+                0,
+                batch_duration.as_millis() as u64,
+                0,
+                0,
+                tree_size,
+            );
+        });
     }
 
     Ok(())

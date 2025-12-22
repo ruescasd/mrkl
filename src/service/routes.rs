@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::service::responses::{
     ApiError, ApiResponse, ConsistencyProofResponse, HasLeafResponse, HasRootResponse,
-    InclusionProofResponse, RootResponse, SizeResponse,
+    InclusionProofResponse, RootResponse, SizeResponse, MetricsResponse,
+    LogMetricsResponse, GlobalMetricsResponse,
 };
 use crate::service::state::AppState;
 use crate::{ConsistencyProof, InclusionProof};
@@ -317,4 +318,34 @@ pub mod proof_bytes_format {
                 .map_err(|err| Error::custom(err.to_string()))
         })
     }
+}
+
+/// Get current metrics for all logs and global statistics
+pub async fn metrics(
+    State(app_state): State<AppState>,
+) -> Result<impl IntoResponse, ApiResponse<()>> {
+    let metrics = app_state.metrics.get_snapshot();
+    
+    let mut logs = std::collections::HashMap::new();
+    for (log_name, log_metrics) in metrics.0 {
+        logs.insert(log_name, LogMetricsResponse {
+            last_batch_rows: log_metrics.last_batch_rows,
+            last_batch_leaves: log_metrics.last_batch_leaves,
+            last_copy_source_rows_ms: log_metrics.last_copy_source_rows_ms,
+            last_fetch_merkle_log_ms: log_metrics.last_fetch_merkle_log_ms,
+            last_tree_update_ms: log_metrics.last_tree_update_ms,
+            total_batches: log_metrics.batches_processed,
+            tree_size: log_metrics.tree_size,
+            tree_memory_bytes: log_metrics.tree_memory_bytes,
+            last_update: log_metrics.last_updated.to_rfc3339(),
+        });
+    }
+    
+    let global = GlobalMetricsResponse {
+        last_cycle_duration_ms: metrics.1.last_cycle_duration_ms,
+        last_active_log_count: metrics.1.last_active_log_count,
+        last_cycle_fraction: metrics.1.last_cycle_fraction,
+    };
+    
+    Ok(ApiResponse::success(MetricsResponse { logs, global }))
 }

@@ -21,6 +21,8 @@ base64 = "0.21"
 digest = "0.10"
 reqwest = { version = "0.11", features = ["json"] }
 serial_test = "3.2.0"
+crossterm = "0.28"
+clap = { version = "4.5", features = ["derive"] }
 
 # Define our binaries
 [[bin]]
@@ -30,3 +32,11 @@ path = "src/bin/setup.rs"
 [[bin]]
 name = "main"
 path = "src/bin/main.rs"
+
+[[bin]]
+name = "monitor"
+path = "src/bin/monitor.rs"
+
+[[bin]]
+name = "load"
+path = "src/bin/load.rs"
