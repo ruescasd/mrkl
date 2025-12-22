@@ -4,7 +4,7 @@ use deadpool_postgres::Object as PooledConnection;
 use std::collections::{BTreeSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
-use super::{AppState, SourceConfig};
+use crate::service::state::AppState;
 use crate::LeafHash;
 
 /// CRITICAL ARCHITECTURAL NOTE: merkle_log is GROUND TRUTH
@@ -74,6 +74,40 @@ impl Ord for SourceRow {
 impl PartialOrd for SourceRow {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+/// Configuration for a source table that feeds into the merkle log
+#[derive(Debug, Clone)]
+pub struct SourceConfig {
+    /// The name of the source table in the database
+    pub table_name: String,
+    /// The column containing the pre-computed hash value
+    pub hash_column: String,
+    /// The unique ID column (must be unique per table, e.g., primary key)
+    pub id_column: String,
+    /// Optional timestamp column for chronological ordering across tables
+    pub timestamp_column: Option<String>,
+    /// The log this source belongs to
+    pub log_name: String,
+}
+
+impl SourceConfig {
+    /// Creates a new source configuration
+    pub fn new(
+        table_name: impl Into<String>,
+        hash_column: impl Into<String>,
+        id_column: impl Into<String>,
+        timestamp_column: Option<String>,
+        log_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            table_name: table_name.into(),
+            hash_column: hash_column.into(),
+            id_column: id_column.into(),
+            timestamp_column,
+            log_name: log_name.into(),
+        }
     }
 }
 
@@ -212,181 +246,6 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
     Ok(())
 }
 
-/// Load enabled log names from verification_logs table
-async fn load_enabled_logs(conn: &PooledConnection) -> Result<Vec<String>> {
-    let rows = conn
-        .query(
-            "SELECT log_name FROM verification_logs WHERE enabled = true ORDER BY log_name",
-            &[],
-        )
-        .await?;
-
-    let log_names: Vec<String> = rows.iter().map(|row| row.get(0)).collect();
-
-    if !log_names.is_empty() {
-        // println!("📋 Loaded {} enabled log(s)", log_names.len());
-    }
-
-    Ok(log_names)
-}
-
-/// Rebuilds all enabled logs from the database on startup
-/// This ensures in-memory trees match persistent state
-pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
-    println!("🔄 Rebuilding all logs from database...");
-
-    let conn = app_state.db_pool.get().await?;
-    let log_names = load_enabled_logs(&conn).await?;
-
-    // Validate all source configurations and report issues
-    println!("🔍 Validating source configurations...");
-    let validations = crate::service::validate_all_logs(&conn).await?;
-    
-    for validation in &validations {
-        if !validation.enabled {
-            continue; // Skip disabled logs
-        }
-
-        let invalid_sources: Vec<_> = validation.sources.iter()
-            .filter(|s| !s.is_valid())
-            .collect();
-
-        if !invalid_sources.is_empty() {
-            println!("⚠️  Log '{}' has {} invalid source(s):", validation.log_name, invalid_sources.len());
-            for source in invalid_sources {
-                for error in source.errors() {
-                    println!("   - {}: {}", source.source_table, error);
-                }
-            }
-        }
-    }
-    println!("✅ Validation complete\n");
-
-    drop(conn);
-
-    if log_names.is_empty() {
-        println!("✅ No logs to rebuild");
-        return Ok(());
-    }
-
-    for log_name in &log_names {
-        rebuild_log(app_state, log_name).await?;
-    }
-
-    println!("✅ Rebuilt {} log(s)", log_names.len());
-    Ok(())
-}
-
-/// Rebuilds a single log's merkle tree from the database
-async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
-    let conn = app_state.db_pool.get().await?;
-
-    // Fetch all entries for this log
-    let rows = conn
-        .query(
-            "SELECT id, leaf_hash FROM merkle_log WHERE log_name = $1 ORDER BY id",
-            &[&log_name],
-        )
-        .await?;
-
-    if rows.is_empty() {
-        println!("  📋 Log '{}': 0 entries", log_name);
-        return Ok(());
-    }
-
-    // Create new merkle state
-    let mut merkle_state = crate::service::MerkleState::new();
-
-    for row in rows {
-        let id: i64 = row.get(0);
-        let hash: Vec<u8> = row.get(1);
-        let leaf_hash = LeafHash::new(hash);
-        merkle_state.update_with_entry(leaf_hash, id);
-    }
-
-    // Store in DashMap
-    let merkle_state_arc = std::sync::Arc::new(parking_lot::RwLock::new(merkle_state));
-    let tree_size = merkle_state_arc.read().tree.len();
-    let last_id = merkle_state_arc.read().last_processed_id;
-
-    app_state
-        .merkle_states
-        .insert(log_name.to_string(), merkle_state_arc);
-
-    println!(
-        "  📋 Log '{}': {} entries (last_id: {})",
-        log_name, tree_size, last_id
-    );
-
-    Ok(())
-}
-
-/// Load enabled source configurations from verification_sources table for a specific log
-async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<Vec<SourceConfig>> {
-    let rows = conn
-        .query(
-            "SELECT source_table, hash_column, id_column, timestamp_column, log_name 
-             FROM verification_sources 
-             WHERE enabled = true AND log_name = $1 
-             ORDER BY source_table",
-            &[&log_name],
-        )
-        .await?;
-
-    let mut configs = Vec::new();
-    for row in rows {
-        let table_name: String = row.get(0);
-        let hash_column: String = row.get(1);
-        let id_column: String = row.get(2);
-        let timestamp_column: Option<String> = row.get(3);
-        let log_name: String = row.get(4);
-        configs.push(SourceConfig::new(
-            &table_name,
-            &hash_column,
-            &id_column,
-            timestamp_column,
-            &log_name,
-        ));
-    }
-
-    if !configs.is_empty() {
-        // println!("📋 Loaded {} source config(s) for log '{}'", configs.len(), log_name);
-    }
-
-    Ok(configs)
-}
-
-/// Validate that all configured source tables exist
-/// Returns only the configs for tables that actually exist
-async fn validate_source_tables(
-    conn: &PooledConnection,
-    configs: &[SourceConfig],
-) -> Result<Vec<SourceConfig>> {
-    let mut valid_configs = Vec::new();
-
-    for config in configs {
-        // Check if table exists in database
-        let exists: bool = conn
-            .query_one(
-                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)",
-                &[&config.table_name],
-            )
-            .await?
-            .get(0);
-
-        if exists {
-            valid_configs.push(config.clone());
-        } else {
-            println!(
-                "⚠️ Skipping configured source '{}' - table does not exist",
-                config.table_name
-            );
-        }
-    }
-
-    Ok(valid_configs)
-}
-
 /// Process a batch of rows from configured source tables into merkle_log for a specific log
 /// Returns the number of rows processed
 async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64) -> Result<i64> {
@@ -512,6 +371,181 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
     txn.commit().await?;
 
     Ok(rows_inserted)
+}
+
+/// Rebuilds all enabled logs from the database on startup
+/// This ensures in-memory trees match persistent state
+pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
+    println!("🔄 Rebuilding all logs from database...");
+
+    let conn = app_state.db_pool.get().await?;
+    let log_names = load_enabled_logs(&conn).await?;
+
+    // Validate all source configurations and report issues
+    println!("🔍 Validating source configurations...");
+    let validations = crate::service::validate_all_logs(&conn).await?;
+    
+    for validation in &validations {
+        if !validation.enabled {
+            continue; // Skip disabled logs
+        }
+
+        let invalid_sources: Vec<_> = validation.sources.iter()
+            .filter(|s| !s.is_valid())
+            .collect();
+
+        if !invalid_sources.is_empty() {
+            println!("⚠️  Log '{}' has {} invalid source(s):", validation.log_name, invalid_sources.len());
+            for source in invalid_sources {
+                for error in source.errors() {
+                    println!("   - {}: {}", source.source_table, error);
+                }
+            }
+        }
+    }
+    println!("✅ Validation complete\n");
+
+    drop(conn);
+
+    if log_names.is_empty() {
+        println!("✅ No logs to rebuild");
+        return Ok(());
+    }
+
+    for log_name in &log_names {
+        rebuild_log(app_state, log_name).await?;
+    }
+
+    println!("✅ Rebuilt {} log(s)", log_names.len());
+    Ok(())
+}
+
+/// Rebuilds a single log's merkle tree from the database
+async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
+    let conn = app_state.db_pool.get().await?;
+
+    // Fetch all entries for this log
+    let rows = conn
+        .query(
+            "SELECT id, leaf_hash FROM merkle_log WHERE log_name = $1 ORDER BY id",
+            &[&log_name],
+        )
+        .await?;
+
+    if rows.is_empty() {
+        println!("  📋 Log '{}': 0 entries", log_name);
+        return Ok(());
+    }
+
+    // Create new merkle state
+    let mut merkle_state = crate::service::MerkleState::new();
+
+    for row in rows {
+        let id: i64 = row.get(0);
+        let hash: Vec<u8> = row.get(1);
+        let leaf_hash = LeafHash::new(hash);
+        merkle_state.update_with_entry(leaf_hash, id);
+    }
+
+    // Store in DashMap
+    let merkle_state_arc = std::sync::Arc::new(parking_lot::RwLock::new(merkle_state));
+    let tree_size = merkle_state_arc.read().tree.len();
+    let last_id = merkle_state_arc.read().last_processed_id;
+
+    app_state
+        .merkle_states
+        .insert(log_name.to_string(), merkle_state_arc);
+
+    println!(
+        "  📋 Log '{}': {} entries (last_id: {})",
+        log_name, tree_size, last_id
+    );
+
+    Ok(())
+}
+
+/// Load enabled log names from verification_logs table
+async fn load_enabled_logs(conn: &PooledConnection) -> Result<Vec<String>> {
+    let rows = conn
+        .query(
+            "SELECT log_name FROM verification_logs WHERE enabled = true ORDER BY log_name",
+            &[],
+        )
+        .await?;
+
+    let log_names: Vec<String> = rows.iter().map(|row| row.get(0)).collect();
+
+    if !log_names.is_empty() {
+        // println!("📋 Loaded {} enabled log(s)", log_names.len());
+    }
+
+    Ok(log_names)
+}
+
+/// Load enabled source configurations from verification_sources table for a specific log
+async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<Vec<SourceConfig>> {
+    let rows = conn
+        .query(
+            "SELECT source_table, hash_column, id_column, timestamp_column, log_name 
+             FROM verification_sources 
+             WHERE enabled = true AND log_name = $1 
+             ORDER BY source_table",
+            &[&log_name],
+        )
+        .await?;
+
+    let mut configs = Vec::new();
+    for row in rows {
+        let table_name: String = row.get(0);
+        let hash_column: String = row.get(1);
+        let id_column: String = row.get(2);
+        let timestamp_column: Option<String> = row.get(3);
+        let log_name: String = row.get(4);
+        configs.push(SourceConfig::new(
+            &table_name,
+            &hash_column,
+            &id_column,
+            timestamp_column,
+            &log_name,
+        ));
+    }
+
+    if !configs.is_empty() {
+        // println!("📋 Loaded {} source config(s) for log '{}'", configs.len(), log_name);
+    }
+
+    Ok(configs)
+}
+
+/// Validate that all configured source tables exist
+/// Returns only the configs for tables that actually exist
+async fn validate_source_tables(
+    conn: &PooledConnection,
+    configs: &[SourceConfig],
+) -> Result<Vec<SourceConfig>> {
+    let mut valid_configs = Vec::new();
+
+    for config in configs {
+        // Check if table exists in database
+        let exists: bool = conn
+            .query_one(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)",
+                &[&config.table_name],
+            )
+            .await?
+            .get(0);
+
+        if exists {
+            valid_configs.push(config.clone());
+        } else {
+            println!(
+                "⚠️ Skipping configured source '{}' - table does not exist",
+                config.table_name
+            );
+        }
+    }
+
+    Ok(valid_configs)
 }
 
 /// Hash a string to i64 for use as advisory lock ID

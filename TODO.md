@@ -90,8 +90,9 @@
 - [ ] Health check endpoint: /health with database connectivity check
 - [ ] Log management API: Create/disable logs without database access
 - [ ] Performance tuning: Configurable batch sizes and intervals per log
-- [ ] Handle empty root case when merkle tree is empty (See routes::get_merkle_root)
+- [ ] Handle empty root case when merkle tree is empty (See routes::get_merkle_root), this root won't be in the root_hash_to_size map but it may have been returned from get_merkle_root
 - [ ] ct-merkle expects data to be passed in which will be hashed, but we want to pass already computed hashes, the current implementation will be hashing our supplied hashes again
+- [ ] investigate postgresql for merkle_log (partitions on the log_name seem a good idea)
 
 **Documentation**:
 - [ ] Deployment guide (environment variables, database setup)

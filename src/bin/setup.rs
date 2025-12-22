@@ -71,12 +71,14 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
     println!("✅ Table 'verification_sources' is ready.");
 
     // 3. Create the merkle log table with strict controls - supports multiple logs and sources
+    // CRITICAL: ON DELETE RESTRICT protects ground truth - merkle_log cannot be rebuilt from sources
+    // To delete a log, you must explicitly delete its merkle_log entries first (conscious decision)
     client
         .batch_execute(
             r#"
         CREATE TABLE IF NOT EXISTS merkle_log (
             id BIGSERIAL PRIMARY KEY,
-            log_name TEXT NOT NULL REFERENCES verification_logs(log_name) ON DELETE CASCADE,
+            log_name TEXT NOT NULL REFERENCES verification_logs(log_name) ON DELETE RESTRICT,
             source_table TEXT NOT NULL,
             source_id BIGINT NOT NULL,
             leaf_hash BYTEA NOT NULL,

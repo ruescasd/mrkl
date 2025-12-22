@@ -11,9 +11,48 @@ pub mod tree;
 
 // Re-export service layer components
 pub use service::{
-    AppState, ConsistencyQuery, InclusionQuery, MerkleState, get_consistency_proof,
+    state::AppState, ConsistencyQuery, InclusionQuery, MerkleState, get_consistency_proof,
     get_inclusion_proof, get_log_size, get_merkle_root,
 };
+
+/// A wrapper around a merkle inclusion proof with metadata needed for external verification
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InclusionProof {
+    /// The index of the leaf in the tree
+    pub index: usize,
+    /// The root hash at the time the proof was generated
+    pub root: Vec<u8>,
+    /// The inclusion proof path as raw bytes
+    pub proof_bytes: Vec<u8>,
+    /// The total number of leaves in the tree at the time of proof generation
+    pub tree_size: usize,
+}
+impl InclusionProof {
+    /// Verifies this proof against the given leaf hash using ct-merkle's proof verification
+    pub fn verify(&self, hash: &[u8]) -> Result<bool> {
+        // Create the leaf hash from the provided hash
+        let leaf_hash = LeafHash::new(hash.to_vec());
+
+        // Create a digest from our stored root bytes
+        let mut digest = Output::<Sha256>::default();
+        if self.root.len() != digest.len() {
+            return Err(anyhow::anyhow!("Invalid root hash length"));
+        }
+        digest.copy_from_slice(&self.root);
+
+        // Create the root hash with the digest and actual tree size
+        let root_hash = RootHash::<Sha256>::new(digest, self.tree_size as u64);
+
+        // Create the inclusion proof from our stored bytes
+        let proof = CtInclusionProof::<Sha256>::from_bytes(self.proof_bytes.clone());
+
+        // Verify using root's verification method
+        match root_hash.verify_inclusion(&leaf_hash, self.index as u64, &proof) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+}
 
 /// A wrapper around a merkle consistency proof that proves one tree is a prefix of another
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,45 +97,6 @@ impl ConsistencyProof {
 
         // Verify consistency
         new_root.verify_consistency(&old_root, &proof).map(|_| true)
-    }
-}
-
-/// A wrapper around a merkle inclusion proof with metadata needed for external verification
-#[derive(Debug, Serialize, Deserialize)]
-pub struct InclusionProof {
-    /// The index of the leaf in the tree
-    pub index: usize,
-    /// The root hash at the time the proof was generated
-    pub root: Vec<u8>,
-    /// The inclusion proof path as raw bytes
-    pub proof_bytes: Vec<u8>,
-    /// The total number of leaves in the tree at the time of proof generation
-    pub tree_size: usize,
-}
-impl InclusionProof {
-    /// Verifies this proof against the given leaf hash using ct-merkle's proof verification
-    pub fn verify(&self, hash: &[u8]) -> Result<bool> {
-        // Create the leaf hash from the provided hash
-        let leaf_hash = LeafHash::new(hash.to_vec());
-
-        // Create a digest from our stored root bytes
-        let mut digest = Output::<Sha256>::default();
-        if self.root.len() != digest.len() {
-            return Err(anyhow::anyhow!("Invalid root hash length"));
-        }
-        digest.copy_from_slice(&self.root);
-
-        // Create the root hash with the digest and actual tree size
-        let root_hash = RootHash::<Sha256>::new(digest, self.tree_size as u64);
-
-        // Create the inclusion proof from our stored bytes
-        let proof = CtInclusionProof::<Sha256>::from_bytes(self.proof_bytes.clone());
-
-        // Verify using root's verification method
-        match root_hash.verify_inclusion(&leaf_hash, self.index as u64, &proof) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        }
     }
 }
 

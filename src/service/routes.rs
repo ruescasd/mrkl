@@ -6,7 +6,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::AppState;
+use crate::service::state::AppState;
 use crate::{ConsistencyProof, InclusionProof};
 
 // HTTP handlers - read-only access to in-memory DashMap state

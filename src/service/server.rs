@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_postgres::NoTls;
 
-use super::AppState;
+use crate::service::state::AppState;
 
 /// Creates and configures the HTTP server with all routes
 pub fn create_server(app_state: AppState) -> Router {
