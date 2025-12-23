@@ -41,6 +41,9 @@ pub struct BatchStats {
 /// - Rebuild from source tables is NOT deterministic (would produce different merkle roots)
 /// - merkle_log must be backed up and preserved for disaster recovery
 /// - This is correct behavior for append-only transparency logs
+/// 
+/// UPDATE: it would be possible to make rebuilds deterministic by storing batch boundaries,
+/// this would also allow the storing of only published roots instead of checkpointing after each entry.
 ///
 /// Represents a row from a source table ready to be inserted into merkle_log
 /// Implements Ord for universal ordering: (timestamp, id, table_name)
@@ -178,7 +181,7 @@ pub async fn run_batch_processor(app_state: AppState) {
                     .to_string()
                     .contains("Another processing batch is running")
                 {
-                    println!("⚠️ Error processing log '{}': {}", log_name, e);
+                    println!("⚠️ Error processing log '{}': {:?}", log_name, e);
                 }
             }
         }
@@ -227,6 +230,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
     let copy_duration = copy_start.elapsed();
 
     let Ok(batch_stats) = batch_result else {
+        println!("************ error branch {:?}", batch_result.as_ref().err().unwrap());
         return Err(batch_result.err().unwrap());
     };
 
@@ -411,7 +415,6 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
         };
 
         let rows = txn.query(&query, &[&last_processed, &batch_size]).await?;
-
         for row in rows {
             let source_id: i64 = row.get(0);
             let leaf_hash: Vec<u8> = row.get(1);
@@ -439,52 +442,58 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
         .collect();
 
     // Insert into merkle_log with sequential IDs using multi-row INSERT
+    // Process in chunks to avoid PostgreSQL parameter limit (~32K parameters = ~6.5K rows × 5 params)
+    const CHUNK_SIZE: usize = 1000; // 1000 rows × 5 params = 5000 parameters (well under limit)
+    
     let rows_inserted = rows_to_insert.len() as i64;
     
     let insert_start = std::time::Instant::now();
     
     if rows_inserted > 0 {
-        // Build multi-row INSERT statement
-        // INSERT INTO merkle_log (...) VALUES ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), ...
-        let mut query = String::from("INSERT INTO merkle_log (id, log_name, source_table, source_id, leaf_hash) VALUES ");
-        let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-        
-        for (offset, _) in rows_to_insert.iter().enumerate() {
-            if offset > 0 {
-                query.push_str(", ");
+        // Process rows in chunks
+        for (chunk_idx, chunk) in rows_to_insert.chunks(CHUNK_SIZE).enumerate() {
+            let chunk_offset = chunk_idx * CHUNK_SIZE;
+            
+            // Build multi-row INSERT statement for this chunk
+            // INSERT INTO merkle_log (...) VALUES ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), ...
+            let mut query = String::from("INSERT INTO merkle_log (id, log_name, source_table, source_id, leaf_hash) VALUES ");
+            let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+            
+            for (offset, _) in chunk.iter().enumerate() {
+                if offset > 0 {
+                    query.push_str(", ");
+                }
+                let base = offset * 5;
+                query.push_str(&format!("(${}, ${}, ${}, ${}, ${})", base + 1, base + 2, base + 3, base + 4, base + 5));
             }
-            let base = offset * 5;
-            query.push_str(&format!("(${}, ${}, ${}, ${}, ${})", base + 1, base + 2, base + 3, base + 4, base + 5));
+            
+            // Flatten parameters for this chunk: for each row, add (id, log_name, source_table, source_id, leaf_hash)
+            let mut param_values: Vec<(i64, &str, &str, i64, &[u8])> = Vec::new();
+            for (offset, source_row) in chunk.iter().enumerate() {
+                let merkle_id = next_id + (chunk_offset + offset) as i64;
+                param_values.push((
+                    merkle_id,
+                    log_name,
+                    &source_row.source_table,
+                    source_row.source_id,
+                    &source_row.leaf_hash,
+                ));
+            }
+            
+            // Build params vector with correct types
+            for pv in &param_values {
+                params.push(&pv.0); // id
+                params.push(&pv.1); // log_name
+                params.push(&pv.2); // source_table
+                params.push(&pv.3); // source_id
+                params.push(&pv.4); // leaf_hash
+            }
+            
+            txn.execute(&query, &params).await?;
         }
-        
-        // Flatten parameters: for each row, add (id, log_name, source_table, source_id, leaf_hash)
-        let mut param_values: Vec<(i64, &str, &str, i64, &[u8])> = Vec::new();
-        for (offset, source_row) in rows_to_insert.iter().enumerate() {
-            let merkle_id = next_id + offset as i64;
-            param_values.push((
-                merkle_id,
-                log_name,
-                &source_row.source_table,
-                source_row.source_id,
-                &source_row.leaf_hash,
-            ));
-        }
-        
-        // Build params vector with correct types
-        for pv in &param_values {
-            params.push(&pv.0); // id
-            params.push(&pv.1); // log_name
-            params.push(&pv.2); // source_table
-            params.push(&pv.3); // source_id
-            params.push(&pv.4); // leaf_hash
-        }
-        
-        txn.execute(&query, &params).await?;
     }
     
     let insert_duration = insert_start.elapsed();
-
-    // Commit transaction - data is now persisted
     txn.commit().await?;
 
     Ok(BatchStats {

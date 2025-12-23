@@ -120,9 +120,7 @@ pub async fn get_inclusion_proof(
 
     let merkle_state = merkle_state_arc.read();
 
-    // Look up the index in our O(1) index map
     let tree = &merkle_state.tree;
-
     // Try to generate and verify proof using our new tree's method
     let proof = match tree.prove_inclusion(&query.hash) {
         Ok(proof) => proof,
@@ -295,30 +293,7 @@ pub async fn has_root(
     ApiResponse::success(HasRootResponse { log_name, exists })
 }
 
-// Custom serialization for byte arrays to use base64
-pub mod proof_bytes_format {
-    use super::*;
-    use serde::{Deserializer, Serializer};
 
-    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&BASE64.encode(bytes))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error;
-        String::deserialize(deserializer).and_then(|string| {
-            BASE64
-                .decode(string.as_bytes())
-                .map_err(|err| Error::custom(err.to_string()))
-        })
-    }
-}
 
 /// Get current metrics for all logs and global statistics
 pub async fn metrics(
@@ -410,4 +385,29 @@ pub async fn admin_status(
         message: format!("Batch processor is {}", state_name),
         state: state_name.to_string(),
     })
+}
+
+// Custom serialization for byte arrays to use base64
+pub mod proof_bytes_format {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&BASE64.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+        String::deserialize(deserializer).and_then(|string| {
+            BASE64
+                .decode(string.as_bytes())
+                .map_err(|err| Error::custom(err.to_string()))
+        })
+    }
 }

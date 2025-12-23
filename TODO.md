@@ -120,8 +120,16 @@
     - [x] System now processes ~150,000 rows/second with 94% idle time
 - [ ] Performance optimization (remaining items - not currently bottlenecks):
     - [ ] Minimize RwLock contention (VALIDATED: tree updates are 0-1ms, not needed currently)
+          - Could use read, clone, update and then write, to perform the tree updates outsiude of the lock
     - [ ] Minimize PostgreSQL lock contention on source tables (documentation task for external applications)
     - [ ] Root storage optimization (only store published roots, not all intermediate - blocked: rebuild scenario doesn't know which roots were published)
+        - UPDATE: 
+            Could store published roots (that is, size of the tree) persistently, this would allow
+              - storing only published roots in memory, when rebuilding we re-construct the published roots,
+                this could even allow storing the tree itself for that root since there would be fewer of them.
+              - rebuilding deterministically only from the source and the persisted roots (tree sizes),
+                since this replays the same batch boundaries
+            To ensure that published roots are stored, we only acquire the tree RwLock and modify it after the published root (the tree size) is persisted (we do _not_ do the db insert within the lock)
     - [ ] Investigate PostgreSQL partitioning for merkle_log (partitions on log_name)
     - [ ] ct-merkle double-hashing issue (expects raw data, we're passing pre-computed hashes that get hashed again)
     - [ ] Configurable batch sizes and intervals per log

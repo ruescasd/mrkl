@@ -161,25 +161,18 @@ impl CtMerkleTree {
         leaf_hash: &[u8],
         root: &[u8],
     ) -> Result<InclusionProof<Sha256>, ProofError> {
-        // Get index for the leaf
-        let idx = self
-            .leaf_hash_to_index
-            .get(leaf_hash)
-            .ok_or(ProofError::LeafNotFound)?;
 
+        if root == self.root() {
+            return self.prove_inclusion_for_tree(&self.tree, leaf_hash);
+        }
+        
         // Get historical tree state
         let historical_tree = self.rewind(root).map_err(|e| match e {
             RewindError::RootNotFound => ProofError::RootNotFound,
             RewindError::UnexpectedRoot(r) => ProofError::UnexpectedRoot(r),
         })?;
 
-        // Check if leaf is actually in the historical state
-        if *idx >= historical_tree.len().try_into().unwrap() {
-            return Err(ProofError::LeafNotPresentAtRoot);
-        }
-
-        // Generate proof from historical state
-        Ok(historical_tree.prove_inclusion(*idx))
+        self.prove_inclusion_for_tree(&historical_tree, leaf_hash)
     }
 
     /// Verifies an inclusion proof for a given leaf hash against a specific historical root
@@ -189,11 +182,10 @@ impl CtMerkleTree {
         root: &[u8],
         proof: &InclusionProof<Sha256>,
     ) -> Result<bool, ct_merkle::InclusionVerifError> {
-        // Get index for this leaf hash
-        let index = match self.leaf_hash_to_index.get(leaf_hash) {
-            Some(idx) => *idx,
-            None => return Ok(false),
-        };
+        
+        if root == self.root() {
+            return self.verify_inclusion_for_tree(&self.tree, leaf_hash, proof);
+        }  
 
         // Get historical tree state
         let historical_tree = match self.rewind(root) {
@@ -201,21 +193,7 @@ impl CtMerkleTree {
             Err(_) => return Ok(false),
         };
 
-        // Check if leaf is in the historical state
-        if index >= historical_tree.len().try_into().unwrap() {
-            return Ok(false);
-        }
-
-        // Create leaf hash wrapper
-        let leaf = LeafHash::new(leaf_hash.to_vec());
-
-        // Get historical root and verify against it
-        let historical_root = historical_tree.root();
-        match historical_root.verify_inclusion(&leaf, index as u64, proof) {
-            Ok(_) => Ok(true),
-            Err(ct_merkle::InclusionVerifError::MalformedProof) => Ok(false),
-            Err(e) => Err(e),
-        }
+        self.verify_inclusion_for_tree(&historical_tree, leaf_hash, proof)
     }
 
     /// Generates a consistency proof between any two historical roots
@@ -245,10 +223,14 @@ impl CtMerkleTree {
         }
 
         // Get tree state at new_root
-        let new_tree = self.rewind(new_root).map_err(|e| match e {
-            RewindError::RootNotFound => ProofError::RootNotFound,
-            RewindError::UnexpectedRoot(r) => ProofError::UnexpectedRoot(r),
-        })?;
+        let new_tree = if new_root == self.root() {
+            &self.tree
+        } else {
+            &self.rewind(new_root).map_err(|e| match e {
+                RewindError::RootNotFound => ProofError::RootNotFound,
+                RewindError::UnexpectedRoot(r) => ProofError::UnexpectedRoot(r),
+            })?
+        };
 
         // Calculate number of additions
         let num_additions = new_size - old_size;
@@ -270,10 +252,16 @@ impl CtMerkleTree {
             None => return Ok(false),
         };
 
-        // Rewind to new root state
-        let new_tree = match self.rewind(new_root) {
-            Ok(tree) => tree,
-            Err(_) => return Ok(false),
+        // Rewind to new root state if needed
+        let rewound_tree;
+        let new_tree = if new_root == self.root() {
+            &self.tree
+        } else {
+            rewound_tree = match self.rewind(new_root) {
+                Ok(tree) => tree,
+                Err(_) => return Ok(false),
+            };
+            &rewound_tree
         };
 
         // Create root hash from old root bytes
@@ -285,6 +273,51 @@ impl CtMerkleTree {
         match new_tree.root().verify_consistency(&old_root_hash, proof) {
             Ok(_) => Ok(true),
             Err(ct_merkle::ConsistencyVerifError::MalformedProof) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Helper to generate inclusion proof for a given tree and leaf hash
+    fn prove_inclusion_for_tree(&self, tree: &MemoryBackedTree<Sha256, LeafHash>, leaf_hash: &[u8]) -> Result<InclusionProof<Sha256>, ProofError> {
+        // Get index for the leaf
+        let idx = self
+            .leaf_hash_to_index
+            .get(leaf_hash)
+            .ok_or(ProofError::LeafNotFound)?;
+
+        // Check if leaf is actually in the historical state
+        if *idx >= tree.len().try_into().unwrap() {
+            return Err(ProofError::LeafNotPresentAtRoot);
+        }
+
+        Ok(tree.prove_inclusion(*idx))
+    }
+
+    /// Helper to verify inclusion proof for a given tree and leaf hash
+    fn verify_inclusion_for_tree(
+        &self,
+        tree: &MemoryBackedTree<Sha256, LeafHash>,
+        leaf_hash: &[u8],
+        proof: &InclusionProof<Sha256>,
+    ) -> Result<bool, ct_merkle::InclusionVerifError> {
+        // Get index for this leaf hash
+        let idx = match self.leaf_hash_to_index.get(leaf_hash) {
+            Some(idx) => *idx,
+            None => return Ok(false),
+        };
+
+        // Create leaf hash wrapper
+        let leaf = LeafHash::new(leaf_hash.to_vec());
+
+        // Check if leaf is in the historical state
+        if idx >= tree.len().try_into().unwrap() {
+            return Ok(false);
+        }
+
+        let root = tree.root();
+        match root.verify_inclusion(&leaf, idx as u64, proof) {
+            Ok(_) => Ok(true),
+            Err(ct_merkle::InclusionVerifError::MalformedProof) => Ok(false),
             Err(e) => Err(e),
         }
     }
