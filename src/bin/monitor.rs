@@ -19,10 +19,12 @@ struct MetricsResponse {
 struct LogMetrics {
     last_batch_rows: u64,
     last_batch_leaves: u64,
-    last_copy_source_rows_ms: u64,
+    last_total_ms: u64,
+    last_copy_ms: u64,
+    last_query_sources_ms: u64,
+    last_insert_merkle_log_ms: u64,
     last_fetch_merkle_log_ms: u64,
     last_tree_update_ms: u64,
-    total_batches: u64,
     tree_size: u64,
     tree_memory_bytes: u64,
     last_update: String,
@@ -109,10 +111,10 @@ fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
 
     // Table header
     println!(
-        "{:<20} {:>8} {:>8} {:>10} {:>10} {:>10} {:>12} {:>10} {:>12}",
-        "LOG", "ROWS", "LEAVES", "COPY(ms)", "FETCH(ms)", "TREE(ms)", "TREE SIZE", "MEMORY", "LAST UPDATE"
+        "{:<20} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10} {:>12}",
+        "LOG", "ROWS", "LEAVES", "TOTAL", "COPY", "QUERY", "INSERT", "FETCH", "TREE", "SIZE", "MEMORY", "UPDATE"
     );
-    println!("{}", "-".repeat(118));
+    println!("{}", "-".repeat(144));
 
     // Sort logs by name for consistent display
     let mut log_names: Vec<_> = metrics.logs.keys().collect();
@@ -130,7 +132,7 @@ fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
                 .unwrap_or("--:--:--");
 
             println!(
-                "{:<20} {:>8} {:>8} {:>10} {:>10} {:>10} {:>12} {:>10} {:>12}",
+                "{:<20} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10} {:>12}",
                 if log_name.len() > 20 {
                     &log_name[..20]
                 } else {
@@ -138,7 +140,10 @@ fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
                 },
                 log_metrics.last_batch_rows,
                 log_metrics.last_batch_leaves,
-                log_metrics.last_copy_source_rows_ms,
+                log_metrics.last_total_ms,
+                log_metrics.last_copy_ms,
+                log_metrics.last_query_sources_ms,
+                log_metrics.last_insert_merkle_log_ms,
                 log_metrics.last_fetch_merkle_log_ms,
                 log_metrics.last_tree_update_ms,
                 format_number(log_metrics.tree_size),

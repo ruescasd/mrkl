@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::RwLock;
 
+use crate::tree::LEAF_HASH_SIZE;
+
 /// Per-log batch processing metrics
 #[derive(Debug, Clone)]
 pub struct LogMetrics {
@@ -11,8 +13,14 @@ pub struct LogMetrics {
     pub last_batch_rows: u64,
     /// Number of leaves added to tree in the last batch
     pub last_batch_leaves: u64,
-    /// Time to copy rows from source tables to merkle_log (ms)
-    pub last_copy_source_rows_ms: u64,
+    /// Total time for entire processing cycle (ms)
+    pub last_total_ms: u64,
+    /// Time for copy_source_rows operation (ms)
+    pub last_copy_ms: u64,
+    /// Time to query source tables (ms)
+    pub last_query_sources_ms: u64,
+    /// Time to insert into merkle_log (ms)
+    pub last_insert_merkle_log_ms: u64,
     /// Time to fetch new entries from merkle_log (ms)
     pub last_fetch_merkle_log_ms: u64,
     /// Time to update in-memory tree (includes write lock hold time) (ms)
@@ -33,7 +41,10 @@ impl LogMetrics {
             log_name,
             last_batch_rows: 0,
             last_batch_leaves: 0,
-            last_copy_source_rows_ms: 0,
+            last_total_ms: 0,
+            last_copy_ms: 0,
+            last_query_sources_ms: 0,
+            last_insert_merkle_log_ms: 0,
             last_fetch_merkle_log_ms: 0,
             last_tree_update_ms: 0,
             batches_processed: 0,
@@ -48,22 +59,67 @@ impl LogMetrics {
         &mut self,
         rows_copied: u64,
         leaves_added: u64,
-        copy_source_rows_ms: u64,
+        total_ms: u64,
+        copy_ms: u64,
+        query_sources_ms: u64,
+        insert_merkle_log_ms: u64,
         fetch_merkle_log_ms: u64,
         tree_update_ms: u64,
         tree_size: u64,
     ) {
         self.last_batch_rows = rows_copied;
         self.last_batch_leaves = leaves_added;
-        self.last_copy_source_rows_ms = copy_source_rows_ms;
+        self.last_total_ms = total_ms;
+        self.last_copy_ms = copy_ms;
+        self.last_query_sources_ms = query_sources_ms;
+        self.last_insert_merkle_log_ms = insert_merkle_log_ms;
         self.last_fetch_merkle_log_ms = fetch_merkle_log_ms;
         self.last_tree_update_ms = tree_update_ms;
         self.batches_processed += 1;
         self.tree_size = tree_size;
         // TODO: Calculate actual memory usage
         // Rough estimate: tree_size * (32 bytes hash + internal nodes overhead)
-        self.tree_memory_bytes = tree_size * 100; // Placeholder approximation
+        self.tree_memory_bytes = Self::tree_size_bytes(tree_size);
         self.last_updated = Utc::now();
+    }
+
+    /// Returns an approximate size of a tree with n leaves in bytes
+    /// 
+    /// A CtMerkleTree has three fields
+    /// - MemoryBackedTree
+    ///     - stores a vector of LeafHash entries with size equal to tree.len()
+    ///     - stores a vector of internal hashes, which "contains all the hashes of the leaves and parents"
+    ///     A tree with n leaves has (2n - 1) nodes, each with a hash of LEAF_HASH_SIZE bytes.
+    ///     Therefore, the internal hashes use (2n - 1) * LEAF_HASH_SIZE bytes.
+    ///     Thus the total size of the MemoryBackedTree is approximately:
+    ///     
+    ///     n + (2n - 1) * LEAF_HASH_SIZE 
+    ///
+    /// - leaf_hash_to_index: HashMap mapping leaf hashes to indices
+    ///     - stores n entries, each with a key of LEAF_HASH_SIZE bytes and a value of usize (8 bytes on 64-bit systems)     
+    ///     Thus, this map uses approximately 
+    /// 
+    ///     n * (LEAF_HASH_SIZE + 8) bytes.
+    ///
+    /// - root_hash_to_size: HashMap mapping root hashes to tree sizes
+    ///    - in the current implementation, we are storing a root every time a new leaf is added (a possible
+    ///     task to modify this is in the TODO), so this map stores one entry per leaf. 
+    ///     Each entry has a key of LEAF_HASH_SIZE bytes and a value of usize (8 bytes on 64-bit systems).
+    ///     Thus, this map uses approximately 
+    /// 
+    ///     n * (LEAF_HASH_SIZE + 8) bytes.
+    /// 
+    /// Combining these, the total size in bytes is approximately:
+    ///     n + (2n - 1) * LEAF_HASH_SIZE + n * (LEAF_HASH_SIZE + 8) + n * (LEAF_HASH_SIZE + 8)
+    /// =   (3n - 1) * LEAF_HASH_SIZE + 2n * (LEAF_HASH_SIZE + 8)
+    /// 
+    /// Due to overhead from HashMap and Vector structures, actual memory usage may be higher, so we apply
+    /// a multiplier of 1.2 to account for that.
+    pub fn tree_size_bytes(n: u64) -> u64 {
+        let tree = ((3 * n) - 1) * LEAF_HASH_SIZE;
+        let maps = (2 * n) * (LEAF_HASH_SIZE + 8);
+
+        ((tree + maps) * 12) / 10
     }
 }
 

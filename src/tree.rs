@@ -23,6 +23,9 @@ pub enum RewindError {
     UnexpectedRoot(Vec<u8>),
 }
 
+// SHA-256 hash size in bytes
+pub const LEAF_HASH_SIZE: u64 = 32; 
+
 /// A merkle tree implementation based on Certificate Transparency that maintains root history and provides proofs
 pub struct CtMerkleTree {
     tree: MemoryBackedTree<Sha256, LeafHash>,

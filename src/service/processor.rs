@@ -7,6 +7,17 @@ use std::hash::{Hash, Hasher};
 use crate::service::state::AppState;
 use crate::LeafHash;
 
+/// Statistics from a batch processing operation
+#[derive(Debug, Clone)]
+pub struct BatchStats {
+    /// Number of rows copied from source tables to merkle_log
+    pub rows_copied: i64,
+    /// Time spent querying source tables (ms)
+    pub query_sources_ms: u64,
+    /// Time spent inserting into merkle_log (ms)
+    pub insert_merkle_log_ms: u64,
+}
+
 /// CRITICAL ARCHITECTURAL NOTE: merkle_log is GROUND TRUTH
 ///
 /// The ordering committed to merkle_log cannot be reconstructed deterministically from source tables alone.
@@ -118,6 +129,24 @@ pub async fn run_batch_processor(app_state: AppState) {
     let interval = std::time::Duration::from_secs(1);
 
     loop {
+        // Check processor state for pause/stop control
+        let state_value = app_state.processor_state.load(std::sync::atomic::Ordering::Relaxed);
+        match state_value {
+            1 => {
+                // Paused - sleep and continue
+                println!("⏸️  Batch processor paused");
+                tokio::time::sleep(interval).await;
+                continue;
+            }
+            2 => {
+                // Stopping - break out of loop
+                println!("🛑 Batch processor stopping");
+                break;
+            }
+            _ => {
+                // Running - continue normally
+            }
+        }
         
         // Load all enabled logs from the database
         let conn = match app_state.db_pool.get().await {
@@ -163,10 +192,15 @@ pub async fn run_batch_processor(app_state: AppState) {
         // Wait for next interval
         tokio::time::sleep(interval).await;
     }
+    
+    println!("✅ Batch processor stopped");
 }
 
 /// Process a single log: copy rows from source tables to merkle_log and update tree
 async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> Result<()> {
+    // Time the entire processing cycle
+    let total_start = std::time::Instant::now();
+
     // Ensure merkle state exists for this log (create if first time)
     if !app_state.merkle_states.contains_key(log_name) {
         app_state.merkle_states.insert(
@@ -181,22 +215,22 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
         .expect("merkle state should exist")
         .clone();
 
-    // Time the copy from source tables to merkle_log
-    let batch_start = std::time::Instant::now();
-
     // Get the current merkle state and last processed ID
     let current_last_id = merkle_state_arc.read().last_processed_id;
+
+    // Time the copy from source tables to merkle_log
+    let copy_start = std::time::Instant::now();
 
     // Copy pending entries into merkle_log
     let batch_result = copy_source_rows(app_state, log_name, batch_size).await;
 
-    let batch_duration = batch_start.elapsed();
+    let copy_duration = copy_start.elapsed();
 
-    let Ok(rows_copied) = batch_result else {
+    let Ok(batch_stats) = batch_result else {
         return Err(batch_result.err().unwrap());
     };
 
-    if rows_copied > 0 {
+    if batch_stats.rows_copied > 0 {
         // Time the retrieval from merkle_log
         let fetch_start = std::time::Instant::now();
 
@@ -247,11 +281,16 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
         let final_tree_size = merkle_state.tree.len() as u64;
         drop(merkle_state); // Release lock before metrics update
         
+        let total_duration = total_start.elapsed();
+        
         app_state.metrics.update_log_metrics(log_name, |log_metrics| {
             log_metrics.record_batch(
-                rows_copied as u64,
+                batch_stats.rows_copied as u64,
                 leaves_added as u64,
-                batch_duration.as_millis() as u64,
+                total_duration.as_millis() as u64,
+                copy_duration.as_millis() as u64,
+                batch_stats.query_sources_ms,
+                batch_stats.insert_merkle_log_ms,
                 fetch_duration.as_millis() as u64,
                 tree_duration.as_millis() as u64,
                 final_tree_size,
@@ -261,11 +300,16 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
     } else {
         // Update metrics even when no rows copied (caught up)
         let tree_size = merkle_state_arc.read().tree.len() as u64;
+        let total_duration = total_start.elapsed();
+        
         app_state.metrics.update_log_metrics(log_name, |log_metrics| {
             log_metrics.record_batch(
                 0,
                 0,
-                batch_duration.as_millis() as u64,
+                total_duration.as_millis() as u64,
+                copy_duration.as_millis() as u64,
+                0,
+                0,
                 0,
                 0,
                 tree_size,
@@ -277,8 +321,8 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
 }
 
 /// Process a batch of rows from configured source tables into merkle_log for a specific log
-/// Returns the number of rows processed
-async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64) -> Result<i64> {
+/// Returns statistics about the batch processing operation
+async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64) -> Result<BatchStats> {
     // Get connection from pool
     let mut conn = app_state.db_pool.get().await?;
 
@@ -287,7 +331,11 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
 
     // If no sources configured, nothing to do
     if source_configs.is_empty() {
-        return Ok(0);
+        return Ok(BatchStats {
+            rows_copied: 0,
+            query_sources_ms: 0,
+            insert_merkle_log_ms: 0,
+        });
     }
 
     // Filter to only tables that actually exist (skip missing tables with warning)
@@ -295,7 +343,11 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
 
     // If no valid sources after filtering, nothing to do
     if valid_configs.is_empty() {
-        return Ok(0);
+        return Ok(BatchStats {
+            rows_copied: 0,
+            query_sources_ms: 0,
+            insert_merkle_log_ms: 0,
+        });
     }
 
     // Start transaction
@@ -324,7 +376,8 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
 
     // Collect rows from all configured source tables into a BTreeSet for automatic sorting
     let mut all_source_rows = BTreeSet::new();
-
+    
+    let query_start = std::time::Instant::now();
     for source_config in valid_configs.iter() {
         // Get last processed source_id for this specific source table in this log
         let last_processed: i64 = txn
@@ -377,6 +430,7 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
             });
         }
     }
+    let query_duration = query_start.elapsed();
 
     // BTreeSet automatically maintains sorted order, limit to batch_size after merging
     let rows_to_insert: Vec<_> = all_source_rows
@@ -384,23 +438,60 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
         .take(batch_size as usize)
         .collect();
 
-    // Insert into merkle_log with sequential IDs
+    // Insert into merkle_log with sequential IDs using multi-row INSERT
     let rows_inserted = rows_to_insert.len() as i64;
-
-    for (offset, source_row) in rows_to_insert.iter().enumerate() {
-        let merkle_id = next_id + offset as i64;
-
-        txn.execute(
-            "INSERT INTO merkle_log (id, log_name, source_table, source_id, leaf_hash) VALUES ($1, $2, $3, $4, $5)",
-            &[&merkle_id, &log_name, &source_row.source_table, &source_row.source_id, &source_row.leaf_hash],
-        )
-        .await?;
+    
+    let insert_start = std::time::Instant::now();
+    
+    if rows_inserted > 0 {
+        // Build multi-row INSERT statement
+        // INSERT INTO merkle_log (...) VALUES ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), ...
+        let mut query = String::from("INSERT INTO merkle_log (id, log_name, source_table, source_id, leaf_hash) VALUES ");
+        let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+        
+        for (offset, _) in rows_to_insert.iter().enumerate() {
+            if offset > 0 {
+                query.push_str(", ");
+            }
+            let base = offset * 5;
+            query.push_str(&format!("(${}, ${}, ${}, ${}, ${})", base + 1, base + 2, base + 3, base + 4, base + 5));
+        }
+        
+        // Flatten parameters: for each row, add (id, log_name, source_table, source_id, leaf_hash)
+        let mut param_values: Vec<(i64, &str, &str, i64, &[u8])> = Vec::new();
+        for (offset, source_row) in rows_to_insert.iter().enumerate() {
+            let merkle_id = next_id + offset as i64;
+            param_values.push((
+                merkle_id,
+                log_name,
+                &source_row.source_table,
+                source_row.source_id,
+                &source_row.leaf_hash,
+            ));
+        }
+        
+        // Build params vector with correct types
+        for pv in &param_values {
+            params.push(&pv.0); // id
+            params.push(&pv.1); // log_name
+            params.push(&pv.2); // source_table
+            params.push(&pv.3); // source_id
+            params.push(&pv.4); // leaf_hash
+        }
+        
+        txn.execute(&query, &params).await?;
     }
+    
+    let insert_duration = insert_start.elapsed();
 
     // Commit transaction - data is now persisted
     txn.commit().await?;
 
-    Ok(rows_inserted)
+    Ok(BatchStats {
+        rows_copied: rows_inserted,
+        query_sources_ms: query_duration.as_millis() as u64,
+        insert_merkle_log_ms: insert_duration.as_millis() as u64,
+    })
 }
 
 /// Rebuilds all enabled logs from the database on startup

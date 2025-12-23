@@ -17,6 +17,7 @@ pub use responses::{
 pub use routes::{
     ConsistencyQuery, HasLeafQuery, HasRootQuery, InclusionQuery, get_consistency_proof,
     get_inclusion_proof, get_log_size, get_merkle_root, has_leaf, has_root,
+    admin_pause, admin_resume, admin_stop, admin_status, AdminControlResponse,
 };
 pub use server::{create_server, initialize_app_state, run_server};
 pub use state::MerkleState;

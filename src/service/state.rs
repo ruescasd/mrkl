@@ -1,8 +1,28 @@
 use crate::{LeafHash, tree::CtMerkleTree};
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU8;
 
 use crate::service::metrics::Metrics;
+
+/// Processor state for graceful shutdown and pause control
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessorState {
+    Running = 0,
+    Paused = 1,
+    Stopping = 2,
+}
+
+impl ProcessorState {
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => ProcessorState::Paused,
+            2 => ProcessorState::Stopping,
+            _ => ProcessorState::Running,
+        }
+    }
+}
 
 /// Shared state between HTTP server and periodic processor
 #[derive(Clone)]
@@ -14,6 +34,9 @@ pub struct AppState {
     pub db_pool: deadpool_postgres::Pool,
     /// Processing metrics for monitoring and diagnostics
     pub metrics: Arc<Metrics>,
+    /// Processor state for graceful shutdown and pause control
+    /// 0=Running, 1=Paused, 2=Stopping
+    pub processor_state: Arc<AtomicU8>,
 }
 
 /// A combined state holding the merkle tree and its corresponding last processed ID.

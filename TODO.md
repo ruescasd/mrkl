@@ -109,17 +109,49 @@
   - Replaced all ad-hoc `json!()` macros in route handlers
   - Proper HTTP status codes: 200 OK for success, 400 Bad Request for errors
   - Backward compatible with existing client code
-- [ ] Performance
-    - [ ] Monitoring: Metrics for processor lag, batch sizes, processing time per log
-    - [ ] Minimize lock contention (RwLock on MerkleState): Batch processor currently holds write lock during entire batch processing cycle, blocking all HTTP read requests. Optimize to hold write lock ONLY during in-memory tree updates (`tree.push()`), not during database I/O. Pattern: fetch from DB (no lock) → process entries (no lock) → acquire write lock → update tree → release immediately → continue DB work. This requires measuring first to establish baseline.
-    - [ ] Minimize PostgreSQL lock contention on source tables: Batch processor reads from external application's source tables. Optimize our side: use READ COMMITTED isolation, short-lived read transactions, index-optimized queries (WHERE id > last_processed_id), tunable batch sizes. Document guidelines for external applications: proper indexing on id_column (PK/unique required), batch inserts preferred over individual inserts, avoid long-running transactions. PostgreSQL MVCC advantages: SELECT generally doesn't block INSERT (non-blocking reads), row-level locking. This is a shared responsibility between our plugin design and external application behavior.
-    - [ ] It may not be necessary to store all intermediate roots in the root_hash_to_size field, we only need to store those roots that are published, it may also be possible to store trees entirely for these reduced number of published roots, which may be better than the rewind function, which reconstructs entire trees from scratch (rewind is used for proofs on arbitrary roots). UPDATE: in a rebuild scenario we do not know which roots have been published, we cannot do this naively
-    - [ ] investigate postgresql for merkle_log (partitions on the log_name seem a good idea)
-    - [ ] ct-merkle expects data to be passed in which will be hashed, but we want to pass already computed hashes, the current implementation will be hashing our supplied hashes again
+- [x] Performance monitoring
+    - [x] Implemented comprehensive metrics system (metrics.rs) with per-log and global statistics
+    - [x] Created HTTP /metrics endpoint returning JSON with detailed timing breakdown
+    - [x] Built TUI monitor utility (monitor.rs) for real-time observation
+    - [x] Created load generator (load.rs) with configurable parameters for testing
+    - [x] Added granular timing metrics: TOTAL (end-to-end), COPY (copy_source_rows), QUERY (source tables), INSERT (merkle_log), FETCH (merkle_log read), TREE (in-memory updates)
+    - [x] Implemented multi-row INSERT optimization - achieved 10x performance improvement (130ms → 12-15ms for 1000 rows)
+    - [x] Validated RwLock is not a bottleneck (tree updates: 0-1ms)
+    - [x] System now processes ~150,000 rows/second with 94% idle time
+- [ ] Performance optimization (remaining items - not currently bottlenecks):
+    - [ ] Minimize RwLock contention (VALIDATED: tree updates are 0-1ms, not needed currently)
+    - [ ] Minimize PostgreSQL lock contention on source tables (documentation task for external applications)
+    - [ ] Root storage optimization (only store published roots, not all intermediate - blocked: rebuild scenario doesn't know which roots were published)
+    - [ ] Investigate PostgreSQL partitioning for merkle_log (partitions on log_name)
+    - [ ] ct-merkle double-hashing issue (expects raw data, we're passing pre-computed hashes that get hashed again)
     - [ ] Configurable batch sizes and intervals per log
-- [ ] Graceful shutdown: Stop processor cleanly, wait for in-flight batches
-- [ ] Health check endpoint: /health with database connectivity check
-- [ ] Log management API: Create/disable logs without database access
+- [x] Graceful shutdown and pause control
+    - Implemented processor_state: Arc<AtomicU8> in AppState (0=Running, 1=Paused, 2=Stopping)
+    - Added admin endpoints (memory-only, no DB access):
+      - POST /admin/pause - pause batch processing
+      - POST /admin/resume - resume from paused state
+      - POST /admin/stop - gracefully stop processor (HTTP server continues)
+      - GET /admin/status - check current processor state
+    - Batch processor checks state flag at start of each cycle
+    - Maintains architectural separation: HTTP endpoints never touch database
+- [ ] Health check endpoint
+    - OPTION 1 (RECOMMENDED): Cached validation results refreshed by batch processor
+      - Add validation_cache: Arc<RwLock<ValidationResults>> to AppState
+      - Batch processor refreshes validation periodically (every 60s)
+      - GET /admin/health endpoint reads from cache (memory-only, no DB access)
+      - Maintains architectural separation while providing observability
+    - OPTION 2: Accept the exception for admin endpoints
+      - GET /admin/health directly calls validate_all_logs()
+      - Read-only operation, admin-only, zero concurrency, infrequent use
+      - Could be acceptable as an exception to "no DB access from HTTP" rule
+    - NOTE: --verify-db flag already provides external validation capability
+- [ ] Log management
+    - NO HTTP ENDPOINT: Admins modify verification_logs table directly via SQL
+    - Batch processor already loads from verification_logs every iteration (1s)
+    - Changes to enabled flag picked up automatically within 1 second
+    - Maintains architectural separation: HTTP layer never modifies database
+    - Document this operational pattern in deployment guide
+- [ ] Graceful shutdown: Stop processor cleanly, wait for in-flight batches (PARTIAL: stop implemented, in-flight tracking not yet added)
 
 
 **Documentation**:

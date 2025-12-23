@@ -141,7 +141,10 @@ pub struct HasRootResponse {
 pub struct LogMetricsResponse {
     pub last_batch_rows: u64,
     pub last_batch_leaves: u64,
-    pub last_copy_source_rows_ms: u64,
+    pub last_total_ms: u64,
+    pub last_copy_ms: u64,
+    pub last_query_sources_ms: u64,
+    pub last_insert_merkle_log_ms: u64,
     pub last_fetch_merkle_log_ms: u64,
     pub last_tree_update_ms: u64,
     pub total_batches: u64,

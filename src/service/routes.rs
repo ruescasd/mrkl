@@ -331,7 +331,10 @@ pub async fn metrics(
         logs.insert(log_name, LogMetricsResponse {
             last_batch_rows: log_metrics.last_batch_rows,
             last_batch_leaves: log_metrics.last_batch_leaves,
-            last_copy_source_rows_ms: log_metrics.last_copy_source_rows_ms,
+            last_total_ms: log_metrics.last_total_ms,
+            last_copy_ms: log_metrics.last_copy_ms,
+            last_query_sources_ms: log_metrics.last_query_sources_ms,
+            last_insert_merkle_log_ms: log_metrics.last_insert_merkle_log_ms,
             last_fetch_merkle_log_ms: log_metrics.last_fetch_merkle_log_ms,
             last_tree_update_ms: log_metrics.last_tree_update_ms,
             total_batches: log_metrics.batches_processed,
@@ -348,4 +351,63 @@ pub async fn metrics(
     };
     
     Ok(ApiResponse::success(MetricsResponse { logs, global }))
+}
+// Admin endpoints for processor control
+// These endpoints allow graceful pause/resume/stop of the batch processor
+
+/// Response for admin control endpoints
+#[derive(Debug, Serialize)]
+pub struct AdminControlResponse {
+    pub message: String,
+    pub state: String,
+}
+
+/// Pause the batch processor (stops processing but keeps server running)
+pub async fn admin_pause(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    app_state.processor_state.store(1, std::sync::atomic::Ordering::Relaxed);
+    ApiResponse::success(AdminControlResponse {
+        message: "Batch processor paused".to_string(),
+        state: "paused".to_string(),
+    })
+}
+
+/// Resume the batch processor from paused state
+pub async fn admin_resume(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    app_state.processor_state.store(0, std::sync::atomic::Ordering::Relaxed);
+    ApiResponse::success(AdminControlResponse {
+        message: "Batch processor resumed".to_string(),
+        state: "running".to_string(),
+    })
+}
+
+/// Stop the batch processor (will exit the processing loop)
+pub async fn admin_stop(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    app_state.processor_state.store(2, std::sync::atomic::Ordering::Relaxed);
+    ApiResponse::success(AdminControlResponse {
+        message: "Batch processor stopping (HTTP server will continue)".to_string(),
+        state: "stopping".to_string(),
+    })
+}
+
+/// Get current processor state
+pub async fn admin_status(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    let state_value = app_state.processor_state.load(std::sync::atomic::Ordering::Relaxed);
+    let state_name = match state_value {
+        1 => "paused",
+        2 => "stopping",
+        _ => "running",
+    };
+    
+    ApiResponse::success(AdminControlResponse {
+        message: format!("Batch processor is {}", state_name),
+        state: state_name.to_string(),
+    })
 }
