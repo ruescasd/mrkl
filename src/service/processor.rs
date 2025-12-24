@@ -442,7 +442,7 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
         .collect();
 
     // Insert into merkle_log with sequential IDs using multi-row INSERT
-    // Process in chunks to avoid PostgreSQL parameter limit (~32K parameters = ~6.5K rows × 5 params)
+    // Process in chunks to avoid PostgreSQL parameter limit (~32K (probably 32,767) parameters = ~6.5K rows × 5 params)
     const CHUNK_SIZE: usize = 1000; // 1000 rows × 5 params = 5000 parameters (well under limit)
     
     let rows_inserted = rows_to_insert.len() as i64;

@@ -127,6 +127,30 @@
             Could store published roots (that is, size of the tree) persistently, this would allow
               - storing only published roots in memory, when rebuilding we re-construct the published roots,
                 this could even allow storing the tree itself for that root since there would be fewer of them.
+                
+                UPDATE: There is no need to store the entire tree, rewind is never called by http endpoints:
+
+                  Hypothesis CONFIRMED. ✅ The rewind function cannot be called by any HTTP endpoints.
+
+                  Detailed trace:
+
+                  get_inclusion_proof (lines 100-159)
+                  Calls tree.prove_inclusion(&query.hash)
+                  Which delegates to prove_inclusion_at_root(hash, &self.root()) ← passes CURRENT root
+                  In prove_inclusion_at_root (line 163-165): checks if root == self.root() → takes early return, skips rewind
+                  Then calls tree.verify_inclusion(&query.hash, &proof)
+                  Which delegates to verify_inclusion_at_root(leaf_hash, &self.root(), proof) ← passes CURRENT root
+                  In verify_inclusion_at_root (line 185-187): checks if root == self.root() → takes early return, skips rewind
+                  get_consistency_proof (lines 161-228)
+                  Calls tree.prove_consistency(&query.old_root)
+                  Which delegates to prove_consistency_between(old_root, &self.root()) ← passes CURRENT root as new_root
+                  In prove_consistency_between (line 226-228): checks if new_root == self.root() → takes first branch &self.tree, skips rewind
+                  Then calls tree.verify_consistency(&query.old_root, &proof)
+                  Which delegates to verify_consistency_between(old_root, &self.root(), proof) ← passes CURRENT root as new_root
+                  In verify_consistency_between (line 257-259): checks if new_root == self.root() → takes first branch &self.tree, skips rewind
+                  Key insight: The HTTP handlers only use the public API methods (prove_inclusion, verify_inclusion, prove_consistency, verify_consistency) which always use the current root for the "new" or "target" tree. The rewind function is only called when checking against historical roots, but the HTTP endpoints never pass historical roots as the verification target.
+
+
               - rebuilding deterministically only from the source and the persisted roots (tree sizes),
                 since this replays the same batch boundaries
             To ensure that published roots are stored, we only acquire the tree RwLock and modify it after the published root (the tree size) is persisted (we do _not_ do the db insert within the lock)
@@ -142,6 +166,8 @@
       - GET /admin/status - check current processor state
     - Batch processor checks state flag at start of each cycle
     - Maintains architectural separation: HTTP endpoints never touch database
+- [X] Graceful shutdown: Stop processor cleanly, wait for in-flight batches (PARTIAL: stop 
+      implementein-flight tracking not yet added) ==> Not necessary.
 - [ ] Health check endpoint
     - OPTION 1 (RECOMMENDED): Cached validation results refreshed by batch processor
       - Add validation_cache: Arc<RwLock<ValidationResults>> to AppState
@@ -159,7 +185,6 @@
     - Changes to enabled flag picked up automatically within 1 second
     - Maintains architectural separation: HTTP layer never modifies database
     - Document this operational pattern in deployment guide
-- [ ] Graceful shutdown: Stop processor cleanly, wait for in-flight batches (PARTIAL: stop implemented, in-flight tracking not yet added)
 
 
 **Documentation**:
