@@ -116,7 +116,8 @@ impl LogMetrics {
     /// Due to overhead from HashMap and Vector structures, actual memory usage may be higher, so we apply
     /// a multiplier of 1.2 to account for that.
     pub fn tree_size_bytes(n: u64) -> u64 {
-        let tree = ((3 * n) - 1) * LEAF_HASH_SIZE;
+        // we do not use 3n - 1 and just use 3n to avoid underflow when n = 0
+        let tree = (3 * n) * LEAF_HASH_SIZE;
         let maps = (2 * n) * (LEAF_HASH_SIZE + 8);
 
         ((tree + maps) * 12) / 10
