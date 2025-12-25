@@ -161,6 +161,40 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
 #[ignore]
 #[serial]
 #[tokio::test]
+async fn test_has_log() -> Result<()> {
+    let client = setup_client().await?;
+
+    println!("\n🧪 Testing has_log endpoint...");
+
+    // Test 1: Check that a log that exists returns true
+    println!("\n🔍 Checking existing log...");
+    let exists = client.client.has_log("test_log_single_source").await?;
+    assert!(exists, "test_log_single_source should exist");
+    println!("   ✓ test_log_single_source exists: {}", exists);
+
+    let exists_multi = client.client.has_log("test_log_multi_source").await?;
+    assert!(exists_multi, "test_log_multi_source should exist");
+    println!("   ✓ test_log_multi_source exists: {}", exists_multi);
+
+    // Test 2: Check that a non-existent log returns false
+    println!("\n🔍 Checking non-existent log...");
+    let nonexistent = client.client.has_log("this_log_does_not_exist").await?;
+    assert!(!nonexistent, "this_log_does_not_exist should not exist");
+    println!("   ✓ this_log_does_not_exist exists: {}", nonexistent);
+
+    // Test 3: Check another non-existent log with different name pattern
+    let another_nonexistent = client.client.has_log("fake_log_12345").await?;
+    assert!(!another_nonexistent, "fake_log_12345 should not exist");
+    println!("   ✓ fake_log_12345 exists: {}", another_nonexistent);
+
+    println!("\n✅ has_log tests complete!");
+
+    Ok(())
+}
+
+#[ignore]
+#[serial]
+#[tokio::test]
 async fn test_consistency_proofs() -> Result<()> {
     let client = setup_client().await?;
     let mut historical_roots = Vec::new();

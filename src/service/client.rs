@@ -232,4 +232,30 @@ impl Client {
 
         Ok(exists)
     }
+
+    /// Checks if a log exists on the server
+    pub async fn has_log(&self, log_name: &str) -> Result<bool> {
+        let response = self
+            .http_client
+            .get(&format!("{}/logs/{}/exists", self.api_base_url, log_name))
+            .send()
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
+
+        // Check for error response
+        if response["status"].as_str() == Some("error") {
+            return Err(anyhow::anyhow!(
+                "Error checking log existence: {}",
+                response["error"].as_str().unwrap_or("unknown error")
+            ));
+        }
+
+        // Extract exists field
+        let exists = response["exists"]
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("Invalid has_log response"))?;
+
+        Ok(exists)
+    }
 }

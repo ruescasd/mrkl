@@ -10,8 +10,8 @@ pub mod validation;
 pub use client::Client;
 pub use processor::rebuild_all_logs;
 pub use responses::{
-    ApiError, ApiResponse, ConsistencyProofResponse, HasLeafResponse, HasRootResponse,
-    InclusionProofResponse, RootResponse, SizeResponse, MetricsResponse,
+    ApiError, ApiResponse, ConsistencyProofResponse, HasLeafResponse, HasLogResponse,
+    HasRootResponse, InclusionProofResponse, RootResponse, SizeResponse, MetricsResponse,
     LogMetricsResponse, GlobalMetricsResponse,
 };
 pub use routes::{

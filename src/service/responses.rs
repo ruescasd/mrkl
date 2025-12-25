@@ -136,6 +136,13 @@ pub struct HasRootResponse {
     pub exists: bool,
 }
 
+/// Response for GET /logs/{log_name}/exists
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HasLogResponse {
+    pub log_name: String,
+    pub exists: bool,
+}
+
 /// Per-log metrics snapshot
 #[derive(Debug, Serialize)]
 pub struct LogMetricsResponse {

@@ -6,8 +6,8 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 
 use crate::service::responses::{
-    ApiError, ApiResponse, ConsistencyProofResponse, HasLeafResponse, HasRootResponse,
-    InclusionProofResponse, RootResponse, SizeResponse, MetricsResponse,
+    ApiError, ApiResponse, ConsistencyProofResponse, HasLeafResponse, HasLogResponse,
+    HasRootResponse, InclusionProofResponse, RootResponse, SizeResponse, MetricsResponse,
     LogMetricsResponse, GlobalMetricsResponse,
 };
 use crate::service::state::AppState;
@@ -291,6 +291,17 @@ pub async fn has_root(
     let exists = tree.get_size_for_root(&query.root).is_some();
 
     ApiResponse::success(HasRootResponse { log_name, exists })
+}
+
+// Handler for the /logs/{log_name}/exists endpoint that checks if a log exists
+pub async fn has_log(
+    Path(log_name): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    // Check if the log exists in the merkle states map
+    let exists = state.merkle_states.contains_key(&log_name);
+
+    ApiResponse::success(HasLogResponse { log_name, exists })
 }
 
 

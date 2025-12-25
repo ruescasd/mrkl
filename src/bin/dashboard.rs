@@ -54,9 +54,6 @@ async fn fetch_metrics(url: &str) -> Result<MetricsResponse> {
     let response = reqwest::get(url).await?;
     let text = response.text().await?;
     
-    // Debug: print raw response
-    // eprintln!("Raw API response: {}", text);
-    
     let api_response: ApiResponse = serde_json::from_str(&text)?;
     
     match api_response {

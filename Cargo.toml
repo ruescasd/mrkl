@@ -34,8 +34,8 @@ name = "main"
 path = "src/bin/main.rs"
 
 [[bin]]
-name = "monitor"
-path = "src/bin/monitor.rs"
+name = "dashboard"
+path = "src/bin/dashboard.rs"
 
 [[bin]]
 name = "load"
