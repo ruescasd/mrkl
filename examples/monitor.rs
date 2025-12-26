@@ -95,8 +95,6 @@ async fn main() -> Result<()> {
                         }
                         Ok(false) => {
                             println!("   ❌ CONSISTENCY VERIFICATION FAILED!");
-                            println!("   ⚠️  WARNING: Possible log tampering detected!");
-                            println!("   → Old root may not be a prefix of new tree");
                         }
                         Err(e) => {
                             println!("   ⚠️  Error verifying consistency: {}", e);
@@ -155,6 +153,7 @@ async fn verify_consistency(
 
     if new_state.size < old_state.size {
         // Log size decreased - this should never happen!
+        println!("   ⚠️  WARNING: Tree size decreased!");
         return Ok(false);
     }
 
