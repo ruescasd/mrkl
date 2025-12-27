@@ -41,7 +41,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
-    
+
     let args = Args::parse();
 
     // Configuration from command line arguments
@@ -78,29 +78,31 @@ async fn main() -> Result<()> {
         // Insert rows into all logs and all sources
         for log_idx in 0..args.num_logs {
             let log_name = format!("load_test_{}", log_idx);
-            
+
             let mut total_inserted = 0;
-            
+
             // Insert into all source tables for this log
             for source_idx in 0..args.num_sources {
                 let source_table = format!("{}_source_{}", log_name, source_idx);
                 let rows_per_source = args.rows_per_interval / args.num_sources as u32;
-                
-                let inserted = insert_rows(
-                    &client,
-                    &source_table,
-                    rows_per_source,
-                    &mut counter,
-                ).await?;
-                
+
+                let inserted =
+                    insert_rows(&client, &source_table, rows_per_source, &mut counter).await?;
+
                 total_inserted += inserted;
             }
 
-            println!("  {} -> {} rows across {} sources", log_name, total_inserted, args.num_sources);
+            println!(
+                "  {} -> {} rows across {} sources",
+                log_name, total_inserted, args.num_sources
+            );
         }
 
         let elapsed = start.elapsed();
-        println!("Batch complete in {:?} | Total rows: {}\n", elapsed, counter);
+        println!(
+            "Batch complete in {:?} | Total rows: {}\n",
+            elapsed, counter
+        );
 
         // Wait for next interval
         if elapsed < interval {
@@ -110,10 +112,14 @@ async fn main() -> Result<()> {
 }
 
 /// Idempotently set up test logs, source tables, and configurations
-async fn setup_test_environment(client: &tokio_postgres::Client, num_logs: usize, num_sources: usize) -> Result<()> {
+async fn setup_test_environment(
+    client: &tokio_postgres::Client,
+    num_logs: usize,
+    num_sources: usize,
+) -> Result<()> {
     for log_idx in 0..num_logs {
         let log_name = format!("load_test_{}", log_idx);
-        
+
         // Create log entry
         client
             .execute(
@@ -127,7 +133,7 @@ async fn setup_test_environment(client: &tokio_postgres::Client, num_logs: usize
         // Create N source tables for this log
         for source_idx in 0..num_sources {
             let source_table = format!("{}_source_{}", log_name, source_idx);
-            
+
             // Create source table (all have same schema with timestamp)
             client
                 .execute(

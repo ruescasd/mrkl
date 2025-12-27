@@ -32,7 +32,7 @@ pub enum RewindError {
 }
 
 /// SHA-256 hash size in bytes
-pub const LEAF_HASH_SIZE: u64 = 32; 
+pub const LEAF_HASH_SIZE: u64 = 32;
 
 /// A merkle tree implementation based on Certificate Transparency that maintains root history and provides proofs
 pub struct CtMerkleTree {
@@ -169,11 +169,10 @@ impl CtMerkleTree {
         leaf_hash: &[u8],
         root: &[u8],
     ) -> Result<InclusionProof<Sha256>, ProofError> {
-
         if root == self.root() {
             return self.prove_inclusion_for_tree(&self.tree, leaf_hash);
         }
-        
+
         // Get historical tree state
         let historical_tree = self.rewind(root).map_err(|e| match e {
             RewindError::RootNotFound => ProofError::RootNotFound,
@@ -190,10 +189,9 @@ impl CtMerkleTree {
         root: &[u8],
         proof: &InclusionProof<Sha256>,
     ) -> Result<bool, ct_merkle::InclusionVerifError> {
-        
         if root == self.root() {
             return self.verify_inclusion_for_tree(&self.tree, leaf_hash, proof);
-        }  
+        }
 
         // Get historical tree state
         let historical_tree = match self.rewind(root) {
@@ -244,7 +242,7 @@ impl CtMerkleTree {
         let num_additions = new_size - old_size;
 
         // Generate proof from the historical tree state
-        Ok(new_tree.prove_consistency(num_additions.try_into().unwrap()))
+        Ok(new_tree.prove_consistency(num_additions))
     }
 
     /// Verifies a consistency proof between any two historical roots
@@ -286,7 +284,11 @@ impl CtMerkleTree {
     }
 
     /// Helper to generate inclusion proof for a given tree and leaf hash
-    fn prove_inclusion_for_tree(&self, tree: &MemoryBackedTree<Sha256, LeafHash>, leaf_hash: &[u8]) -> Result<InclusionProof<Sha256>, ProofError> {
+    fn prove_inclusion_for_tree(
+        &self,
+        tree: &MemoryBackedTree<Sha256, LeafHash>,
+        leaf_hash: &[u8],
+    ) -> Result<InclusionProof<Sha256>, ProofError> {
         // Get index for the leaf
         let idx = self
             .leaf_hash_to_index
@@ -328,6 +330,12 @@ impl CtMerkleTree {
             Err(ct_merkle::InclusionVerifError::MalformedProof) => Ok(false),
             Err(e) => Err(e),
         }
+    }
+}
+
+impl Default for CtMerkleTree {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -567,13 +575,15 @@ mod tests {
             Err(ProofError::RootNotFound)
         ));
         assert!(
-            !tree.verify_inclusion_at_root(&leaf1_hash, &fake_root, &proof1)
+            !tree
+                .verify_inclusion_at_root(&leaf1_hash, &fake_root, &proof1)
                 .expect("Should return false")
         );
 
         // For incorrect proof (using proof from different root)
         assert!(
-            !tree.verify_inclusion_at_root(&leaf1_hash, &root2, &proof1)
+            !tree
+                .verify_inclusion_at_root(&leaf1_hash, &root2, &proof1)
                 .expect("Should process request")
         );
     }
@@ -645,13 +655,15 @@ mod tests {
             Err(ProofError::RootNotFound)
         ));
         assert!(
-            !tree.verify_consistency_between(&root1, &fake_root, &proof1)
+            !tree
+                .verify_consistency_between(&root1, &fake_root, &proof1)
                 .expect("Should return false")
         );
 
         // Wrong proof (using proof between different roots)
         assert!(
-            !tree.verify_consistency_between(&root1, &root3, &proof1)
+            !tree
+                .verify_consistency_between(&root1, &root3, &proof1)
                 .expect("Should return false")
         );
     }

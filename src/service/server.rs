@@ -36,11 +36,23 @@ pub fn create_server(app_state: AppState) -> Router {
         )
         .route("/logs/:log_name/has_leaf", get(crate::service::has_leaf))
         .route("/logs/:log_name/has_root", get(crate::service::has_root))
-        .route("/logs/:log_name/exists", get(crate::service::routes::has_log))
+        .route(
+            "/logs/:log_name/exists",
+            get(crate::service::routes::has_log),
+        )
         .route("/metrics", get(crate::service::routes::metrics))
-        .route("/admin/pause", axum::routing::post(crate::service::routes::admin_pause))
-        .route("/admin/resume", axum::routing::post(crate::service::routes::admin_resume))
-        .route("/admin/stop", axum::routing::post(crate::service::routes::admin_stop))
+        .route(
+            "/admin/pause",
+            axum::routing::post(crate::service::routes::admin_pause),
+        )
+        .route(
+            "/admin/resume",
+            axum::routing::post(crate::service::routes::admin_resume),
+        )
+        .route(
+            "/admin/stop",
+            axum::routing::post(crate::service::routes::admin_stop),
+        )
         .route("/admin/status", get(crate::service::routes::admin_status))
         .with_state(app_state)
         .fallback(handle_unmatched)

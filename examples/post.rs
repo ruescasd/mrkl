@@ -64,7 +64,10 @@ async fn main() -> Result<()> {
 
     if is_valid {
         println!("✅ Proof verification PASSED");
-        println!("   Entry \"{}\" is cryptographically verified to be in the log!", data);
+        println!(
+            "   Entry \"{}\" is cryptographically verified to be in the log!",
+            data
+        );
     } else {
         println!("❌ Proof verification FAILED");
         return Err(anyhow::anyhow!("Inclusion proof verification failed"));
@@ -149,7 +152,7 @@ async fn insert_entry(client: &tokio_postgres::Client, data: &str) -> Result<Vec
 /// Waits for the server's batch processor to discover the newly created log
 async fn wait_for_log_discovery(client: &Client) -> Result<()> {
     println!("⏳ Waiting for server to discover the log...");
-    
+
     for attempt in 1..=30 {
         match client.has_log(LOG_NAME).await {
             Ok(true) => {
@@ -170,7 +173,7 @@ async fn wait_for_log_discovery(client: &Client) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -178,9 +181,9 @@ async fn wait_for_log_discovery(client: &Client) -> Result<()> {
 /// (also ensures the log itself has been discovered by the server)
 async fn wait_for_entry_in_log(client: &Client, data: &str) -> Result<()> {
     wait_for_log_discovery(client).await?;
-    
+
     println!("⏳ Waiting for entry to be processed into merkle log...");
-    
+
     for attempt in 1..=30 {
         match client.has_leaf(LOG_NAME, data).await {
             Ok(true) => {
@@ -196,6 +199,6 @@ async fn wait_for_entry_in_log(client: &Client, data: &str) -> Result<()> {
             Err(e) => return Err(e),
         }
     }
-    
+
     Ok(())
 }

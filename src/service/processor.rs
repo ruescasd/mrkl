@@ -4,8 +4,8 @@ use deadpool_postgres::Object as PooledConnection;
 use std::collections::{BTreeSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
-use crate::service::state::AppState;
 use crate::LeafHash;
+use crate::service::state::AppState;
 
 /// Statistics from a batch processing operation
 #[derive(Debug, Clone)]
@@ -26,8 +26,10 @@ pub struct BatchStats {
 /// 1. **Batch boundaries matter**: Entries are sorted within each batch, not globally. The same entry might
 ///    end up at different positions depending on when batches run.
 ///
-///    Example: Entry X (no timestamp) with 9 timestamped entries in batch 1 → X at position 10
-///             Same 20 entries in one batch → X at position 20 (after all 19 timestamped entries)
+///    Example: 
+/// 
+///    Entry X (no timestamp) with 9 timestamped entries in batch 1 → X at position 10
+///    Same 20 entries in one batch → X at position 20 (after all 19 timestamped entries)
 ///
 /// 2. **Late arrivals**: An entry with timestamp T1 might arrive AFTER entries with T2, T3 (T2 > T1).
 ///    Once T2, T3 are committed to the merkle tree, we cannot retroactively insert T1 before them.
@@ -41,7 +43,7 @@ pub struct BatchStats {
 /// - Rebuild from source tables is NOT deterministic (would produce different merkle roots)
 /// - merkle_log must be backed up and preserved for disaster recovery
 /// - This is correct behavior for append-only transparency logs
-/// 
+///
 /// UPDATE: it would be possible to make rebuilds deterministic by storing batch boundaries,
 /// this would also allow the storing of only published roots instead of checkpointing after each entry.
 ///
@@ -133,7 +135,9 @@ pub async fn run_batch_processor(app_state: AppState) {
 
     loop {
         // Check processor state for pause/stop control
-        let state_value = app_state.processor_state.load(std::sync::atomic::Ordering::Relaxed);
+        let state_value = app_state
+            .processor_state
+            .load(std::sync::atomic::Ordering::Relaxed);
         match state_value {
             1 => {
                 // Paused - sleep and continue
@@ -150,7 +154,7 @@ pub async fn run_batch_processor(app_state: AppState) {
                 // Running - continue normally
             }
         }
-        
+
         // Load all enabled logs from the database
         let conn = match app_state.db_pool.get().await {
             Ok(c) => c,
@@ -163,7 +167,7 @@ pub async fn run_batch_processor(app_state: AppState) {
 
         let logs_result = load_enabled_logs(&conn).await;
         // Release connection before processing
-        drop(conn); 
+        drop(conn);
 
         let Ok(log_names) = logs_result else {
             println!(
@@ -181,21 +185,21 @@ pub async fn run_batch_processor(app_state: AppState) {
                 && !e
                     .to_string()
                     .contains("Another processing batch is running")
-                {
-                    println!("⚠️ Error processing log '{}': {:?}", log_name, e);
-                }
+            {
+                println!("⚠️ Error processing log '{}': {:?}", log_name, e);
+            }
         }
         let elapsed = now.elapsed();
-        
+
         // Update global metrics
         app_state.metrics.update_global_metrics(|global| {
             global.record_cycle(elapsed.as_millis() as u64, log_names.len(), &interval);
         });
-        
+
         // Wait for next interval
         tokio::time::sleep(interval).await;
     }
-    
+
     println!("✅ Batch processor stopped");
 }
 
@@ -283,42 +287,45 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
         // Update metrics for this log
         let final_tree_size = merkle_state.tree.len() as u64;
         // Release lock asap
-        drop(merkle_state); 
-        
-        let total_duration = total_start.elapsed();
-        
-        app_state.metrics.update_log_metrics(log_name, |log_metrics| {
-            log_metrics.record_batch(
-                batch_stats.rows_copied as u64,
-                leaves_added as u64,
-                total_duration.as_millis() as u64,
-                copy_duration.as_millis() as u64,
-                batch_stats.query_sources_ms,
-                batch_stats.insert_merkle_log_ms,
-                fetch_duration.as_millis() as u64,
-                tree_duration.as_millis() as u64,
-                final_tree_size,
-            );
-        });
+        drop(merkle_state);
 
+        let total_duration = total_start.elapsed();
+
+        app_state
+            .metrics
+            .update_log_metrics(log_name, |log_metrics| {
+                log_metrics.record_batch(
+                    batch_stats.rows_copied as u64,
+                    leaves_added as u64,
+                    total_duration.as_millis() as u64,
+                    copy_duration.as_millis() as u64,
+                    batch_stats.query_sources_ms,
+                    batch_stats.insert_merkle_log_ms,
+                    fetch_duration.as_millis() as u64,
+                    tree_duration.as_millis() as u64,
+                    final_tree_size,
+                );
+            });
     } else {
         // Update metrics even when no rows copied (caught up)
         let tree_size = merkle_state_arc.read().tree.len() as u64;
         let total_duration = total_start.elapsed();
-        
-        app_state.metrics.update_log_metrics(log_name, |log_metrics| {
-            log_metrics.record_batch(
-                0,
-                0,
-                total_duration.as_millis() as u64,
-                copy_duration.as_millis() as u64,
-                0,
-                0,
-                0,
-                0,
-                tree_size,
-            );
-        });
+
+        app_state
+            .metrics
+            .update_log_metrics(log_name, |log_metrics| {
+                log_metrics.record_batch(
+                    0,
+                    0,
+                    total_duration.as_millis() as u64,
+                    copy_duration.as_millis() as u64,
+                    0,
+                    0,
+                    0,
+                    0,
+                    tree_size,
+                );
+            });
     }
 
     Ok(())
@@ -326,7 +333,11 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
 
 /// Process a batch of rows from configured source tables into merkle_log for a specific log
 /// Returns statistics about the batch processing operation
-async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64) -> Result<BatchStats> {
+async fn copy_source_rows(
+    app_state: &AppState,
+    log_name: &str,
+    batch_size: i64,
+) -> Result<BatchStats> {
     // Get connection from pool
     let mut conn = app_state.db_pool.get().await?;
 
@@ -380,7 +391,7 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
 
     // Collect rows from all configured source tables into a BTreeSet for automatic sorting
     let mut all_source_rows = BTreeSet::new();
-    
+
     let query_start = std::time::Instant::now();
     for source_config in valid_configs.iter() {
         // Get last processed source_id for this specific source table in this log
@@ -444,29 +455,38 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
     // Insert into merkle_log with sequential IDs using multi-row INSERT
     // Process in chunks to avoid PostgreSQL parameter limit (~32K (probably 32,767) parameters = ~6.5K rows × 5 params)
     const CHUNK_SIZE: usize = 1000; // 1000 rows × 5 params = 5000 parameters (well under limit)
-    
+
     let rows_inserted = rows_to_insert.len() as i64;
-    
+
     let insert_start = std::time::Instant::now();
-    
+
     if rows_inserted > 0 {
         // Process rows in chunks
         for (chunk_idx, chunk) in rows_to_insert.chunks(CHUNK_SIZE).enumerate() {
             let chunk_offset = chunk_idx * CHUNK_SIZE;
-            
+
             // Build multi-row INSERT statement for this chunk
             // INSERT INTO merkle_log (...) VALUES ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), ...
-            let mut query = String::from("INSERT INTO merkle_log (id, log_name, source_table, source_id, leaf_hash) VALUES ");
+            let mut query = String::from(
+                "INSERT INTO merkle_log (id, log_name, source_table, source_id, leaf_hash) VALUES ",
+            );
             let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-            
+
             for (offset, _) in chunk.iter().enumerate() {
                 if offset > 0 {
                     query.push_str(", ");
                 }
                 let base = offset * 5;
-                query.push_str(&format!("(${}, ${}, ${}, ${}, ${})", base + 1, base + 2, base + 3, base + 4, base + 5));
+                query.push_str(&format!(
+                    "(${}, ${}, ${}, ${}, ${})",
+                    base + 1,
+                    base + 2,
+                    base + 3,
+                    base + 4,
+                    base + 5
+                ));
             }
-            
+
             // Flatten parameters for this chunk: for each row, add (id, log_name, source_table, source_id, leaf_hash)
             let mut param_values: Vec<(i64, &str, &str, i64, &[u8])> = Vec::new();
             for (offset, source_row) in chunk.iter().enumerate() {
@@ -479,7 +499,7 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
                     &source_row.leaf_hash,
                 ));
             }
-            
+
             // Build params vector with correct types
             for pv in &param_values {
                 params.push(&pv.0); // id
@@ -488,11 +508,11 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
                 params.push(&pv.3); // source_id
                 params.push(&pv.4); // leaf_hash
             }
-            
+
             txn.execute(&query, &params).await?;
         }
     }
-    
+
     let insert_duration = insert_start.elapsed();
     txn.commit().await?;
 
@@ -513,19 +533,25 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
     // Validate all source configurations and report issues
     println!("🔍 Validating source configurations...");
     let validations = crate::service::validate_all_logs(&conn).await?;
-    
+
     for validation in &validations {
         if !validation.enabled {
             // Skip disabled logs
             continue;
         }
 
-        let invalid_sources: Vec<_> = validation.sources.iter()
+        let invalid_sources: Vec<_> = validation
+            .sources
+            .iter()
             .filter(|s| !s.is_valid())
             .collect();
 
         if !invalid_sources.is_empty() {
-            println!("⚠️  Log '{}' has {} invalid source(s):", validation.log_name, invalid_sources.len());
+            println!(
+                "⚠️  Log '{}' has {} invalid source(s):",
+                validation.log_name,
+                invalid_sources.len()
+            );
             for source in invalid_sources {
                 for error in source.errors() {
                     println!("   - {}: {}", source.source_table, error);

@@ -44,6 +44,7 @@ impl TestClient {
     pub async fn setup_test_environment(&self) -> Result<()> {
         // Define our test logs
         // Format: (log_name, description, [(source_table, has_timestamp)])
+        #[allow(clippy::type_complexity)]
         let logs: Vec<(&str, &str, Vec<(&str, bool)>)> = vec![
             (
                 "test_log_single_source",

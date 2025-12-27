@@ -13,13 +13,12 @@
 
 use anyhow::Result;
 use crossterm::{
-    cursor,
-    execute,
+    cursor, execute,
     terminal::{self, ClearType},
 };
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
@@ -66,14 +65,14 @@ enum ApiResponse {
 async fn fetch_metrics(url: &str) -> Result<MetricsResponse> {
     let response = reqwest::get(url).await?;
     let text = response.text().await?;
-    
+
     let api_response: ApiResponse = serde_json::from_str(&text)?;
-    
+
     match api_response {
         ApiResponse::Ok { logs, global } => {
             // eprintln!("Parsed {} logs", logs.len());
             Ok(MetricsResponse { logs, global })
-        },
+        }
         ApiResponse::Error { error } => Err(anyhow::anyhow!("API error: {}", error)),
     }
 }
@@ -122,7 +121,18 @@ fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
     // Table header
     println!(
         "{:<20} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10} {:>12}",
-        "LOG", "ROWS", "LEAVES", "TOTAL", "COPY", "QUERY", "INSERT", "FETCH", "TREE", "SIZE", "MEMORY", "UPDATE"
+        "LOG",
+        "ROWS",
+        "LEAVES",
+        "TOTAL",
+        "COPY",
+        "QUERY",
+        "INSERT",
+        "FETCH",
+        "TREE",
+        "SIZE",
+        "MEMORY",
+        "UPDATE"
     );
     println!("{}", "-".repeat(144));
 
@@ -164,8 +174,10 @@ fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
     }
 
     println!();
-    println!("Press Ctrl+C to exit | Refreshing every {}s", 
-             std::env::var("REFRESH_INTERVAL").unwrap_or_else(|_| "1".to_string()));
+    println!(
+        "Press Ctrl+C to exit | Refreshing every {}s",
+        std::env::var("REFRESH_INTERVAL").unwrap_or_else(|_| "1".to_string())
+    );
 
     stdout.flush()?;
     Ok(())
@@ -174,8 +186,8 @@ fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Get server URL from environment or use default
-    let server_url = std::env::var("MRKL_SERVER_URL")
-        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let server_url =
+        std::env::var("MRKL_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
     let metrics_url = format!("{}/metrics", server_url);
 
     // Refresh interval in seconds
@@ -187,7 +199,7 @@ async fn main() -> Result<()> {
     println!("Connecting to {}...", metrics_url);
     println!("Refresh interval: {}s", refresh_interval);
     println!();
-    
+
     // No raw mode - allows normal terminal interactions (text selection, etc.)
 
     loop {

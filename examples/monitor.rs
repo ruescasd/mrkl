@@ -91,7 +91,10 @@ async fn main() -> Result<()> {
                     match verify_consistency(&client, log_name, &state, &new_state).await {
                         Ok(true) => {
                             println!("   ✅ Consistency proof VERIFIED");
-                            println!("   → Log correctly appended {} new entries", new_state.size - state.size);
+                            println!(
+                                "   → Log correctly appended {} new entries",
+                                new_state.size - state.size
+                            );
                         }
                         Ok(false) => {
                             println!("   ❌ CONSISTENCY VERIFICATION FAILED!");
@@ -116,8 +119,10 @@ async fn main() -> Result<()> {
                     state = new_state;
                 } else {
                     // No change - print periodic status
-                    println!("💤 [Check #{}] No changes (size: {})", check_count, state.size);
-                    
+                    println!(
+                        "💤 [Check #{}] No changes (size: {})",
+                        check_count, state.size
+                    );
                 }
             }
             Err(e) => {
@@ -182,9 +187,5 @@ fn print_state(state: &LogState) {
 }
 
 fn min(a: usize, b: usize) -> usize {
-    if a < b {
-        a
-    } else {
-        b
-    }
+    if a < b { a } else { b }
 }

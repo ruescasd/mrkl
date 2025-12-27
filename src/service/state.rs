@@ -19,7 +19,7 @@ pub enum ProcessorState {
 
 impl ProcessorState {
     /// Converts a u8 value to ProcessorState
-    /// 
+    ///
     /// Used to read the atomic state value. Unknown values default to Running.
     pub fn from_u8(value: u8) -> Self {
         match value {
@@ -68,5 +68,11 @@ impl MerkleState {
     pub fn update_with_entry(&mut self, hash: LeafHash, id: i64) {
         self.tree.push(hash);
         self.last_processed_id = id;
+    }
+}
+
+impl Default for MerkleState {
+    fn default() -> Self {
+        Self::new()
     }
 }

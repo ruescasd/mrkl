@@ -125,23 +125,38 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
 
     // Test has_leaf - should find our entries
     println!("\n🔍 Testing has_leaf...");
-    let has_leaf1 = client.client.has_leaf("test_log_single_source", "has_test_1").await?;
+    let has_leaf1 = client
+        .client
+        .has_leaf("test_log_single_source", "has_test_1")
+        .await?;
     assert!(has_leaf1, "has_test_1 should exist in the tree");
     println!("   ✓ has_test_1 exists: {}", has_leaf1);
 
-    let has_leaf2 = client.client.has_leaf("test_log_single_source", "has_test_2").await?;
+    let has_leaf2 = client
+        .client
+        .has_leaf("test_log_single_source", "has_test_2")
+        .await?;
     assert!(has_leaf2, "has_test_2 should exist in the tree");
     println!("   ✓ has_test_2 exists: {}", has_leaf2);
 
     // Test has_leaf - should not find non-existent entry
-    let has_nonexistent = client.client.has_leaf("test_log_single_source", "nonexistent_entry").await?;
-    assert!(!has_nonexistent, "nonexistent_entry should not exist in the tree");
+    let has_nonexistent = client
+        .client
+        .has_leaf("test_log_single_source", "nonexistent_entry")
+        .await?;
+    assert!(
+        !has_nonexistent,
+        "nonexistent_entry should not exist in the tree"
+    );
     println!("   ✓ nonexistent_entry exists: {}", has_nonexistent);
 
     // Test has_root - check if initial root exists (if we had one)
     println!("\n🔍 Testing has_root...");
     if let Some(old_root) = initial_root {
-        let has_old_root = client.client.has_root("test_log_single_source", old_root.clone()).await?;
+        let has_old_root = client
+            .client
+            .has_root("test_log_single_source", old_root.clone())
+            .await?;
         assert!(has_old_root, "Old root should exist in root history");
         println!("   ✓ Old root exists: {}", has_old_root);
     } else {
@@ -150,13 +165,19 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
 
     // Test has_root - check current root
     let current_root = client.client.get_root("test_log_single_source").await?;
-    let has_current_root = client.client.has_root("test_log_single_source", current_root).await?;
+    let has_current_root = client
+        .client
+        .has_root("test_log_single_source", current_root)
+        .await?;
     assert!(has_current_root, "Current root should exist");
     println!("   ✓ Current root exists: {}", has_current_root);
 
     // Test has_root - check non-existent root
     let fake_root = vec![9u8; 32];
-    let has_fake_root = client.client.has_root("test_log_single_source", fake_root).await?;
+    let has_fake_root = client
+        .client
+        .has_root("test_log_single_source", fake_root)
+        .await?;
     assert!(!has_fake_root, "Fake root should not exist");
     println!("   ✓ Fake root exists: {}", has_fake_root);
 
@@ -767,10 +788,12 @@ async fn test_no_timestamp_ordering() -> Result<()> {
     println!("\n✅ Verifying ordering constraints:");
 
     // Create a list of (id, table_name, proof_index) for verification
-    let mut entries = [(id1, "source_no_timestamp_b", proof1.index),
+    let mut entries = [
+        (id1, "source_no_timestamp_b", proof1.index),
         (id2, "source_no_timestamp", proof2.index),
         (id3, "source_no_timestamp_b", proof3.index),
-        (id4, "source_no_timestamp", proof4.index)];
+        (id4, "source_no_timestamp", proof4.index),
+    ];
 
     // Sort by (id, table_name) to get expected order
     entries.sort_by(|a, b| match a.0.cmp(&b.0) {

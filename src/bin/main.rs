@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
         let conn = app_state.db_pool.get().await?;
         let validations = service::validate_all_logs(&conn).await?;
         service::print_validation_report(&validations);
-        
+
         // Exit with status code based on validation result
         let all_valid = validations.iter().all(|v| v.is_valid());
         std::process::exit(if all_valid { 0 } else { 1 });

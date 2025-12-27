@@ -1,6 +1,6 @@
 //! MRKL - PostgreSQL-integrated Merkle Tree Verification Service
 //!
-//! This crate provides an addon service to existing postgresql database that 
+//! This crate provides an addon service to existing postgresql database that
 //! maintains multiple independent Certificate Transparency-style merkle logs. It enables
 //! cryptographic verification of append-only logs through inclusion and consistency proofs.
 //!
@@ -44,8 +44,8 @@ pub mod tree;
 
 // Re-export service layer components
 pub use service::{
-    state::AppState, ConsistencyQuery, InclusionQuery, MerkleState, get_consistency_proof,
-    get_inclusion_proof, get_log_size, get_merkle_root,
+    ConsistencyQuery, InclusionQuery, MerkleState, get_consistency_proof, get_inclusion_proof,
+    get_log_size, get_merkle_root, state::AppState,
 };
 
 /// A wrapper around a merkle inclusion proof with metadata needed for external verification
@@ -134,11 +134,11 @@ impl ConsistencyProof {
 }
 
 /// Represents a pre-computed hash value for the merkle tree.
-/// 
+///
 /// Although the intent of this structure it to store pre-computed hashes,
 /// the architectur of ct-merkle does not allow hashes to be pre-computed externally,
-/// this means that even if a pre-computed hash is provided, ct-merkle will re-hash 
-/// it internally. This also means that it is possible to insert arbitrary binary data 
+/// this means that even if a pre-computed hash is provided, ct-merkle will re-hash
+/// it internally. This also means that it is possible to insert arbitrary binary data
 /// to the tree, not just hashes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeafHash {

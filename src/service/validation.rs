@@ -46,7 +46,7 @@ pub struct LogValidation {
 
 impl SourceValidation {
     /// Checks if this source configuration is valid
-    /// 
+    ///
     /// A source is valid if:
     /// - The table exists
     /// - The ID column exists and has the correct type
@@ -54,13 +54,22 @@ impl SourceValidation {
     /// - The timestamp column (if required) exists and has the correct type
     pub fn is_valid(&self) -> bool {
         self.table_exists
-            && self.id_column_valid.as_ref().is_some_and(|v| v.type_matches)
-            && self.hash_column_valid.as_ref().is_some_and(|v| v.type_matches)
-            && self.timestamp_column_valid.as_ref().is_none_or(|v| v.type_matches) // Optional, so true if None
+            && self
+                .id_column_valid
+                .as_ref()
+                .is_some_and(|v| v.type_matches)
+            && self
+                .hash_column_valid
+                .as_ref()
+                .is_some_and(|v| v.type_matches)
+            && self
+                .timestamp_column_valid
+                .as_ref()
+                .is_none_or(|v| v.type_matches) // Optional, so true if None
     }
 
     /// Returns a list of human-readable validation error messages
-    /// 
+    ///
     /// If the source is valid, returns an empty vector.
     pub fn errors(&self) -> Vec<String> {
         let mut errors = Vec::new();
@@ -98,7 +107,10 @@ impl SourceValidation {
 
         if let Some(ref col) = self.timestamp_column_valid {
             if !col.exists {
-                errors.push(format!("Timestamp column '{}' does not exist", col.column_name));
+                errors.push(format!(
+                    "Timestamp column '{}' does not exist",
+                    col.column_name
+                ));
             } else if !col.type_matches {
                 errors.push(format!(
                     "Timestamp column '{}' has type '{}' but expected '{}'",
@@ -115,7 +127,7 @@ impl SourceValidation {
 
 impl LogValidation {
     /// Checks if this log configuration is valid
-    /// 
+    ///
     /// A log is valid if it has at least one source and all sources are valid.
     pub fn is_valid(&self) -> bool {
         !self.sources.is_empty() && self.sources.iter().all(|s| s.is_valid())
@@ -223,10 +235,24 @@ async fn validate_source(
     }
 
     // Validate columns
-    let id_col_validation = validate_column(conn, source_table, id_column, &["bigint", "integer", "smallint", "numeric"]).await?;
+    let id_col_validation = validate_column(
+        conn,
+        source_table,
+        id_column,
+        &["bigint", "integer", "smallint", "numeric"],
+    )
+    .await?;
     let hash_col_validation = validate_column(conn, source_table, hash_column, &["bytea"]).await?;
     let timestamp_col_validation = if let Some(ts_col) = timestamp_column {
-        Some(validate_column(conn, source_table, ts_col, &["timestamp without time zone", "timestamp with time zone"]).await?)
+        Some(
+            validate_column(
+                conn,
+                source_table,
+                ts_col,
+                &["timestamp without time zone", "timestamp with time zone"],
+            )
+            .await?,
+        )
     } else {
         None
     };
@@ -263,7 +289,7 @@ async fn validate_column(
     if let Some(row) = row_opt {
         let data_type: String = row.get(0);
         let udt_name: String = row.get(1);
-        
+
         // Use udt_name for more precise type matching (handles domains, custom types)
         let actual_type = if data_type == "USER-DEFINED" {
             udt_name.clone()
@@ -271,9 +297,9 @@ async fn validate_column(
             data_type.clone()
         };
 
-        let type_matches = expected_types.iter().any(|&expected| {
-            actual_type.eq_ignore_ascii_case(expected)
-        });
+        let type_matches = expected_types
+            .iter()
+            .any(|&expected| actual_type.eq_ignore_ascii_case(expected));
 
         Ok(ColumnValidation {
             column_name: column_name.to_string(),

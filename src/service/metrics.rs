@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 use crate::tree::LEAF_HASH_SIZE;
 
@@ -57,6 +57,7 @@ impl LogMetrics {
     }
 
     /// Update metrics after processing a batch
+    #[allow(clippy::too_many_arguments)]
     pub fn record_batch(
         &mut self,
         rows_copied: u64,
@@ -86,35 +87,38 @@ impl LogMetrics {
     }
 
     /// Returns an approximate size of a tree with n leaves in bytes
-    /// 
+    ///
     /// A CtMerkleTree has three fields
     /// - MemoryBackedTree
     ///     - stores a vector of LeafHash entries with size equal to tree.len()
     ///     - stores a vector of internal hashes, which "contains all the hashes of the leaves and parents"
-    ///     A tree with n leaves has (2n - 1) nodes, each with a hash of LEAF_HASH_SIZE bytes.
-    ///     Therefore, the internal hashes use (2n - 1) * LEAF_HASH_SIZE bytes.
-    ///     Thus the total size of the MemoryBackedTree is approximately:
+    /// 
+    /// A tree with n leaves has (2n - 1) nodes, each with a hash of LEAF_HASH_SIZE bytes.
+    /// Therefore, the internal hashes use (2n - 1) * LEAF_HASH_SIZE bytes.
+    /// Thus the total size of the MemoryBackedTree is approximately:
     ///     
-    ///     n + (2n - 1) * LEAF_HASH_SIZE 
+    /// n + (2n - 1) * LEAF_HASH_SIZE
     ///
     /// - leaf_hash_to_index: HashMap mapping leaf hashes to indices
     ///     - stores n entries, each with a key of LEAF_HASH_SIZE bytes and a value of usize (8 bytes on 64-bit systems)     
-    ///     Thus, this map uses approximately 
-    /// 
-    ///     n * (LEAF_HASH_SIZE + 8) bytes.
+    ///  
+    /// Thus, this map uses approximately
+    ///
+    /// n * (LEAF_HASH_SIZE + 8) bytes.
     ///
     /// - root_hash_to_size: HashMap mapping root hashes to tree sizes
     ///    - in the current implementation, we are storing a root every time a new leaf is added (a possible
-    ///     task to modify this is in the TODO), so this map stores one entry per leaf. 
-    ///     Each entry has a key of LEAF_HASH_SIZE bytes and a value of usize (8 bytes on 64-bit systems).
-    ///     Thus, this map uses approximately 
-    /// 
-    ///     n * (LEAF_HASH_SIZE + 8) bytes.
-    /// 
+    ///      task to modify this is in the TODO), so this map stores one entry per leaf.
+    ///      Each entry has a key of LEAF_HASH_SIZE bytes and a value of usize (8 bytes on 64-bit systems).
+    ///     
+    /// Thus, this map uses approximately
+    ///
+    /// n * (LEAF_HASH_SIZE + 8) bytes.
+    ///
     /// Combining these, the total size in bytes is approximately:
     ///     n + (2n - 1) * LEAF_HASH_SIZE + n * (LEAF_HASH_SIZE + 8) + n * (LEAF_HASH_SIZE + 8)
     /// =   (3n - 1) * LEAF_HASH_SIZE + 2n * (LEAF_HASH_SIZE + 8)
-    /// 
+    ///
     /// Due to overhead from HashMap and Vector structures, actual memory usage may be higher, so we apply
     /// a multiplier of 1.2 to try to account for that.
     pub fn tree_size_bytes(n: u64) -> u64 {
@@ -151,12 +155,23 @@ impl GlobalMetrics {
     }
 
     /// Update metrics after a processing cycle
-    pub fn record_cycle(&mut self, cycle_duration_ms: u64, active_logs: usize, interval: &core::time::Duration) {
+    pub fn record_cycle(
+        &mut self,
+        cycle_duration_ms: u64,
+        active_logs: usize,
+        interval: &core::time::Duration,
+    ) {
         self.last_cycle_duration_ms = cycle_duration_ms;
         self.last_active_log_count = active_logs;
         // Calculate fraction assuming a 1-second interval (configurable in processor)
         self.last_cycle_fraction = cycle_duration_ms as f64 / interval.as_millis() as f64;
         self.last_cycle_timestamp = Utc::now();
+    }
+}
+
+impl Default for GlobalMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -223,5 +238,11 @@ impl Metrics {
         let log_metrics = self.log_metrics.read().clone();
         let global_metrics = self.global_metrics.read().clone();
         (log_metrics, global_metrics)
+    }
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self::new()
     }
 }

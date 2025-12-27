@@ -6,9 +6,9 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 
 use crate::service::responses::{
-    ApiError, ApiResponse, ConsistencyProofResponse, HasLeafResponse, HasLogResponse,
-    HasRootResponse, InclusionProofResponse, RootResponse, SizeResponse, MetricsResponse,
-    LogMetricsResponse, GlobalMetricsResponse,
+    ApiError, ApiResponse, ConsistencyProofResponse, GlobalMetricsResponse, HasLeafResponse,
+    HasLogResponse, HasRootResponse, InclusionProofResponse, LogMetricsResponse, MetricsResponse,
+    RootResponse, SizeResponse,
 };
 use crate::service::state::AppState;
 use crate::{ConsistencyProof, InclusionProof};
@@ -18,7 +18,7 @@ use crate::{ConsistencyProof, InclusionProof};
 // This ensures clean separation: HTTP handlers never block on database I/O
 
 /// Query parameters for inclusion proof requests
-/// 
+///
 /// Used by the `/logs/{log_name}/proof` endpoint to specify which leaf to prove inclusion for.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InclusionQuery {
@@ -28,7 +28,7 @@ pub struct InclusionQuery {
 }
 
 /// Query parameters for consistency proof requests
-/// 
+///
 /// Used by the `/logs/{log_name}/consistency` endpoint to prove consistency
 /// between two tree states.
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,7 +39,7 @@ pub struct ConsistencyQuery {
 }
 
 /// Query parameters for leaf existence checks
-/// 
+///
 /// Used by the `/logs/{log_name}/has_leaf` endpoint to check if a leaf exists
 /// in the current tree state.
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ pub struct HasLeafQuery {
 }
 
 /// Query parameters for root existence checks
-/// 
+///
 /// Used by the `/logs/{log_name}/has_root` endpoint to check if a root hash
 /// appears in the log's merkle tree history.
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,14 +61,14 @@ pub struct HasRootQuery {
 }
 
 /// Get the current merkle root for a log
-/// 
+///
 /// Endpoint: `GET /logs/{log_name}/root`
-/// 
+///
 /// Returns the current merkle root hash, tree size, and last processed entry ID.
 /// This is the primary endpoint for clients to discover the current log state.
-/// 
+///
 /// # Errors
-/// 
+///
 /// Returns `LogNotFound` if the log doesn't exist, or `EmptyTree` if the log
 /// has no entries yet.
 pub async fn get_merkle_root(
@@ -92,9 +92,9 @@ pub async fn get_merkle_root(
 }
 
 /// Get the size of a merkle log
-/// 
+///
 /// Endpoint: `GET /logs/{log_name}/size`
-/// 
+///
 /// Returns the number of leaves in the merkle tree. Returns 0 if the log
 /// doesn't exist yet. Use `/logs/{log_name}/exists` to distinguish between
 /// an empty log and a non-existent log.
@@ -114,22 +114,25 @@ pub async fn get_log_size(
         }
     };
 
-    ApiResponse::success(SizeResponse { log_name, size: size as u64 })
+    ApiResponse::success(SizeResponse {
+        log_name,
+        size: size as u64,
+    })
 }
 
 /// Generate an inclusion proof for a leaf in the merkle tree
-/// 
+///
 /// Endpoint: `GET /logs/{log_name}/proof?hash=<base64_hash>`
-/// 
+///
 /// Generates a cryptographic proof that the specified leaf exists in the tree.
 /// The proof is verified before being returned to ensure correctness.
-/// 
+///
 /// # Query Parameters
-/// 
+///
 /// - `hash`: Base64-encoded leaf hash to prove inclusion for
-/// 
+///
 /// # Errors
-/// 
+///
 /// - `InvalidRequest`: Query parameter parsing failed or hash not base64
 /// - `LogNotFound`: The specified log doesn't exist
 /// - `ProofGenerationFailed`: Failed to generate the proof (leaf not found)
@@ -194,29 +197,29 @@ pub async fn get_inclusion_proof(
                 proof: inclusion_proof,
             })
         }
-        Ok(false) => ApiError::ProofVerificationFailed(
-            "Proof verification returned false".to_string()
-        ).to_response(),
-        Err(e) => ApiError::ProofVerificationFailed(
-            format!("Proof verification error: {:?}", e)
-        ).to_response(),
+        Ok(false) => {
+            ApiError::ProofVerificationFailed("Proof verification returned false".to_string())
+                .to_response()
+        }
+        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification error: {:?}", e))
+            .to_response(),
     }
 }
 
 /// Generate a consistency proof between two tree states
-/// 
+///
 /// Endpoint: `GET /logs/{log_name}/consistency?old_root=<base64_root>`
-/// 
+///
 /// Generates a cryptographic proof that the tree grew in an append-only manner
 /// from the historical state (identified by `old_root`) to the current state.
 /// This is essential for Certificate Transparency-style auditing.
-/// 
+///
 /// # Query Parameters
-/// 
+///
 /// - `old_root`: Base64-encoded root hash of the historical tree state
-/// 
+///
 /// # Errors
-/// 
+///
 /// - `InvalidRequest`: Query parameter parsing failed or old_root not base64
 /// - `LogNotFound`: The specified log doesn't exist
 /// - `ProofGenerationFailed`: Failed to generate the proof (old_root not found in history)
@@ -281,29 +284,29 @@ pub async fn get_consistency_proof(
                 proof: consistency_proof,
             })
         }
-        Ok(false) => ApiError::ProofVerificationFailed(
-            "Proof verification returned false".to_string()
-        ).to_response(),
-        Err(e) => ApiError::ProofVerificationFailed(
-            format!("Proof verification error: {:?}", e)
-        ).to_response(),
+        Ok(false) => {
+            ApiError::ProofVerificationFailed("Proof verification returned false".to_string())
+                .to_response()
+        }
+        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification error: {:?}", e))
+            .to_response(),
     }
 }
 
 /// Check if a leaf exists in the merkle tree
-/// 
+///
 /// Endpoint: `GET /logs/{log_name}/has_leaf?hash=<base64_hash>`
-/// 
+///
 /// Performs an O(1) lookup to check if the specified leaf exists in the current
 /// tree state. This is faster than requesting an inclusion proof when you only
 /// need existence checking.
-/// 
+///
 /// # Query Parameters
-/// 
+///
 /// - `hash`: Base64-encoded leaf hash to check for
-/// 
+///
 /// # Errors
-/// 
+///
 /// - `InvalidRequest`: Query parameter parsing failed or hash not base64
 /// - `LogNotFound`: The specified log doesn't exist
 pub async fn has_leaf(
@@ -342,19 +345,19 @@ pub async fn has_leaf(
 }
 
 /// Check if a root hash exists in the log's history
-/// 
+///
 /// Endpoint: `GET /logs/{log_name}/has_root?root=<base64_root>`
-/// 
+///
 /// Performs an O(1) lookup to check if the specified root hash appears in the
 /// merkle tree's history. Useful for verifying that you've observed a particular
 /// tree state before requesting a consistency proof.
-/// 
+///
 /// # Query Parameters
-/// 
+///
 /// - `root`: Base64-encoded root hash to check for
-/// 
+///
 /// # Errors
-/// 
+///
 /// - `InvalidRequest`: Query parameter parsing failed or root not base64
 /// - `LogNotFound`: The specified log doesn't exist
 pub async fn has_root(
@@ -393,9 +396,9 @@ pub async fn has_root(
 }
 
 /// Check if a log exists on the server
-/// 
+///
 /// Endpoint: `GET /logs/{log_name}/exists`
-/// 
+///
 /// Returns whether the named log has been discovered and initialized by the
 /// batch processor. This disambiguates between an empty log and a non-existent
 /// log, which both return size 0 from the `/size` endpoint.
@@ -409,38 +412,39 @@ pub async fn has_log(
     ApiResponse::success(HasLogResponse { log_name, exists })
 }
 
-
-
 /// Get current metrics for all logs and global statistics
 pub async fn metrics(
     State(app_state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiResponse<()>> {
     let metrics = app_state.metrics.get_snapshot();
-    
+
     let mut logs = std::collections::HashMap::new();
     for (log_name, log_metrics) in metrics.0 {
-        logs.insert(log_name, LogMetricsResponse {
-            last_batch_rows: log_metrics.last_batch_rows,
-            last_batch_leaves: log_metrics.last_batch_leaves,
-            last_total_ms: log_metrics.last_total_ms,
-            last_copy_ms: log_metrics.last_copy_ms,
-            last_query_sources_ms: log_metrics.last_query_sources_ms,
-            last_insert_merkle_log_ms: log_metrics.last_insert_merkle_log_ms,
-            last_fetch_merkle_log_ms: log_metrics.last_fetch_merkle_log_ms,
-            last_tree_update_ms: log_metrics.last_tree_update_ms,
-            total_batches: log_metrics.batches_processed,
-            tree_size: log_metrics.tree_size,
-            tree_memory_bytes: log_metrics.tree_memory_bytes,
-            last_update: log_metrics.last_updated.to_rfc3339(),
-        });
+        logs.insert(
+            log_name,
+            LogMetricsResponse {
+                last_batch_rows: log_metrics.last_batch_rows,
+                last_batch_leaves: log_metrics.last_batch_leaves,
+                last_total_ms: log_metrics.last_total_ms,
+                last_copy_ms: log_metrics.last_copy_ms,
+                last_query_sources_ms: log_metrics.last_query_sources_ms,
+                last_insert_merkle_log_ms: log_metrics.last_insert_merkle_log_ms,
+                last_fetch_merkle_log_ms: log_metrics.last_fetch_merkle_log_ms,
+                last_tree_update_ms: log_metrics.last_tree_update_ms,
+                total_batches: log_metrics.batches_processed,
+                tree_size: log_metrics.tree_size,
+                tree_memory_bytes: log_metrics.tree_memory_bytes,
+                last_update: log_metrics.last_updated.to_rfc3339(),
+            },
+        );
     }
-    
+
     let global = GlobalMetricsResponse {
         last_cycle_duration_ms: metrics.1.last_cycle_duration_ms,
         last_active_log_count: metrics.1.last_active_log_count,
         last_cycle_fraction: metrics.1.last_cycle_fraction,
     };
-    
+
     Ok(ApiResponse::success(MetricsResponse { logs, global }))
 }
 // Admin endpoints for processor control
@@ -456,10 +460,10 @@ pub struct AdminControlResponse {
 }
 
 /// Pause the batch processor (stops processing but keeps server running)
-pub async fn admin_pause(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
-    app_state.processor_state.store(1, std::sync::atomic::Ordering::Relaxed);
+pub async fn admin_pause(State(app_state): State<AppState>) -> impl IntoResponse {
+    app_state
+        .processor_state
+        .store(1, std::sync::atomic::Ordering::Relaxed);
     ApiResponse::success(AdminControlResponse {
         message: "Batch processor paused".to_string(),
         state: "paused".to_string(),
@@ -467,10 +471,10 @@ pub async fn admin_pause(
 }
 
 /// Resume the batch processor from paused state
-pub async fn admin_resume(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
-    app_state.processor_state.store(0, std::sync::atomic::Ordering::Relaxed);
+pub async fn admin_resume(State(app_state): State<AppState>) -> impl IntoResponse {
+    app_state
+        .processor_state
+        .store(0, std::sync::atomic::Ordering::Relaxed);
     ApiResponse::success(AdminControlResponse {
         message: "Batch processor resumed".to_string(),
         state: "running".to_string(),
@@ -478,10 +482,10 @@ pub async fn admin_resume(
 }
 
 /// Stop the batch processor (will exit the processing loop)
-pub async fn admin_stop(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
-    app_state.processor_state.store(2, std::sync::atomic::Ordering::Relaxed);
+pub async fn admin_stop(State(app_state): State<AppState>) -> impl IntoResponse {
+    app_state
+        .processor_state
+        .store(2, std::sync::atomic::Ordering::Relaxed);
     ApiResponse::success(AdminControlResponse {
         message: "Batch processor stopping (will shut down entire application)".to_string(),
         state: "stopping".to_string(),
@@ -489,16 +493,16 @@ pub async fn admin_stop(
 }
 
 /// Get current processor state
-pub async fn admin_status(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
-    let state_value = app_state.processor_state.load(std::sync::atomic::Ordering::Relaxed);
+pub async fn admin_status(State(app_state): State<AppState>) -> impl IntoResponse {
+    let state_value = app_state
+        .processor_state
+        .load(std::sync::atomic::Ordering::Relaxed);
     let state_name = match state_value {
         1 => "paused",
         2 => "stopping",
         _ => "running",
     };
-    
+
     ApiResponse::success(AdminControlResponse {
         message: format!("Batch processor is {}", state_name),
         state: state_name.to_string(),
@@ -506,7 +510,7 @@ pub async fn admin_status(
 }
 
 /// Custom serde module for base64 encoding of byte arrays
-/// 
+///
 /// This module provides serialization and deserialization for `Vec<u8>` fields
 /// that should be represented as base64 strings in JSON. Used by query parameter
 /// structs to accept base64-encoded hashes from clients.

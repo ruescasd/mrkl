@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::{ConsistencyProof, InclusionProof};
 
 /// Unified API response wrapper
-/// 
+///
 /// All endpoints return either Success(data) or Error(error_info)
 /// This ensures consistent JSON structure across the API
 #[derive(Debug, Serialize)]
@@ -91,9 +91,7 @@ impl ApiError {
                 format!("Merkle tree for log '{}' is empty", log_name),
                 "empty_tree",
             ),
-            ApiError::InvalidRequest(msg) => {
-                ApiResponse::error_with_type(msg, "invalid_request")
-            }
+            ApiError::InvalidRequest(msg) => ApiResponse::error_with_type(msg, "invalid_request"),
             ApiError::ProofGenerationFailed(msg) => {
                 ApiResponse::error_with_type(msg, "proof_generation_failed")
             }
