@@ -567,16 +567,14 @@ mod tests {
             Err(ProofError::RootNotFound)
         ));
         assert!(
-            tree.verify_inclusion_at_root(&leaf1_hash, &fake_root, &proof1)
+            !tree.verify_inclusion_at_root(&leaf1_hash, &fake_root, &proof1)
                 .expect("Should return false")
-                == false
         );
 
         // For incorrect proof (using proof from different root)
         assert!(
-            tree.verify_inclusion_at_root(&leaf1_hash, &root2, &proof1)
+            !tree.verify_inclusion_at_root(&leaf1_hash, &root2, &proof1)
                 .expect("Should process request")
-                == false
         );
     }
 
@@ -647,16 +645,14 @@ mod tests {
             Err(ProofError::RootNotFound)
         ));
         assert!(
-            tree.verify_consistency_between(&root1, &fake_root, &proof1)
+            !tree.verify_consistency_between(&root1, &fake_root, &proof1)
                 .expect("Should return false")
-                == false
         );
 
         // Wrong proof (using proof between different roots)
         assert!(
-            tree.verify_consistency_between(&root1, &root3, &proof1)
+            !tree.verify_consistency_between(&root1, &root3, &proof1)
                 .expect("Should return false")
-                == false
         );
     }
 }
