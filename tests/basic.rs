@@ -5,6 +5,8 @@
 //! sequentially since they share database state.
 //!
 //! Run with: `cargo test --test basic -- --include-ignored --nocapture`
+#![allow(clippy::print_stdout)]
+#![allow(clippy::print_stderr)]
 
 use anyhow::Result;
 use base64::Engine;

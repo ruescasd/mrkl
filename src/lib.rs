@@ -109,7 +109,7 @@ impl ConsistencyProof {
     /// Verifies this proof using ct-merkle's consistency proof verification
     ///
     /// # Errors
-    /// 
+    ///
     /// - `MalformedProof`: if the old or new root hash lengths are invalid, or if the proof bytes are malformed
     /// - `ConsistencyVerifError`: if the proof verification fails
     ///

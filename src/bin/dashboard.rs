@@ -3,6 +3,9 @@
 //! A terminal-based dashboard that displays live metrics from the mrkl server,
 //! including per-log processing statistics and global system metrics.
 //!
+
+#![allow(clippy::print_stdout)]
+#![allow(clippy::print_stderr)]
 //! # Usage
 //!
 //! ```bash

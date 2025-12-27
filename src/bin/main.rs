@@ -3,6 +3,8 @@
 //! Runs the HTTP API server and batch processor that monitors `PostgreSQL` tables
 //! and builds merkle trees for Certificate Transparency-style verification.
 //!
+
+#![allow(clippy::print_stdout)]
 //! # Usage
 //!
 //! ```bash
@@ -18,6 +20,14 @@ use mrkl::service;
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
+
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();

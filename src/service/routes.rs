@@ -114,10 +114,7 @@ pub async fn get_log_size(
         }
     };
 
-    ApiResponse::success(SizeResponse {
-        log_name,
-        size,
-    })
+    ApiResponse::success(SizeResponse { log_name, size })
 }
 
 /// Generate an inclusion proof for a leaf in the merkle tree
@@ -150,7 +147,7 @@ pub async fn get_inclusion_proof(
     let Query(query) = match query_result {
         Ok(query) => query,
         Err(e) => {
-            println!("🚫 Invalid proof request: {}", e);
+            tracing::debug!(error = %e, "Invalid proof request");
             return ApiError::InvalidRequest(format!(
                 "Invalid request parameters: {}. The hash parameter must be base64 encoded.",
                 e
@@ -186,7 +183,9 @@ pub async fn get_inclusion_proof(
     match tree.verify_inclusion(&query.hash, &proof) {
         Ok(()) => {
             // Get the index (safe because prove_inclusion succeeded)
-            let index = tree.get_index(&query.hash).expect("Index must exist after proof generation succeeds");
+            let index = tree
+                .get_index(&query.hash)
+                .expect("Index must exist after proof generation succeeds");
 
             // Create InclusionProof with all necessary data
             let inclusion_proof = InclusionProof {
@@ -237,7 +236,7 @@ pub async fn get_consistency_proof(
     let Query(query) = match query_result {
         Ok(query) => query,
         Err(e) => {
-            println!("🚫 Invalid consistency proof request: {}", e);
+            tracing::debug!(error = %e, "Invalid consistency proof request");
             return ApiError::InvalidRequest(format!(
                 "Invalid request parameters: {}. The old_root parameter must be base64 encoded.",
                 e
@@ -272,7 +271,9 @@ pub async fn get_consistency_proof(
     // Verify the proof
     match tree.verify_consistency(&query.old_root, &proof) {
         Ok(()) => {
-            let old_size = tree.get_size_for_root(&query.old_root).expect("Old tree size must exist after proof generation succeeds");
+            let old_size = tree
+                .get_size_for_root(&query.old_root)
+                .expect("Old tree size must exist after proof generation succeeds");
 
             // Return the verified proof
             let consistency_proof = ConsistencyProof {
@@ -318,7 +319,7 @@ pub async fn has_leaf(
     let Query(query) = match query_result {
         Ok(query) => query,
         Err(e) => {
-            println!("🚫 Invalid has_leaf request: {}", e);
+            tracing::debug!(error = %e, "Invalid has_leaf request");
             return ApiError::InvalidRequest(format!(
                 "Invalid request parameters: {}. The hash parameter must be base64 encoded.",
                 e
@@ -369,7 +370,7 @@ pub async fn has_root(
     let Query(query) = match query_result {
         Ok(query) => query,
         Err(e) => {
-            println!("🚫 Invalid has_root request: {}", e);
+            tracing::debug!(error = %e, "Invalid has_root request");
             return ApiError::InvalidRequest(format!(
                 "Invalid request parameters: {}. The root parameter must be base64 encoded.",
                 e
@@ -413,9 +414,7 @@ pub async fn has_log(
 }
 
 /// Get current metrics for all logs and global statistics
-pub async fn metrics(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn metrics(State(app_state): State<AppState>) -> impl IntoResponse {
     let metrics = app_state.metrics.get_snapshot();
 
     let mut logs = std::collections::HashMap::new();

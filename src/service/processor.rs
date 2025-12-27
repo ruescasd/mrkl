@@ -26,8 +26,8 @@ pub struct BatchStats {
 /// 1. **Batch boundaries matter**: Entries are sorted within each batch, not globally. The same entry might
 ///    end up at different positions depending on when batches run.
 ///
-///    Example: 
-/// 
+///    Example:
+///
 ///    Entry X (no timestamp) with 9 timestamped entries in batch 1 → X at position 10
 ///    Same 20 entries in one batch → X at position 20 (after all 19 timestamped entries)
 ///
@@ -133,6 +133,7 @@ impl SourceConfig {
 
 /// Runs the batch processing loop that moves entries from source tables to `merkle_log`
 /// and updates the merkle tree state for each log
+#[allow(clippy::cognitive_complexity)]
 pub async fn run_batch_processor(app_state: AppState) {
     let batch_size: i64 = 10000;
     let interval = std::time::Duration::from_secs(1);
@@ -145,13 +146,13 @@ pub async fn run_batch_processor(app_state: AppState) {
         match state_value {
             1 => {
                 // Paused - sleep and continue
-                println!("⏸️  Batch processor paused");
+                tracing::info!("Batch processor paused");
                 tokio::time::sleep(interval).await;
                 continue;
             }
             2 => {
                 // Stopping - break out of loop
-                println!("🛑 Batch processor stopping");
+                tracing::info!("Batch processor stopping");
                 break;
             }
             _ => {
@@ -163,7 +164,7 @@ pub async fn run_batch_processor(app_state: AppState) {
         let conn = match app_state.db_pool.get().await {
             Ok(c) => c,
             Err(e) => {
-                println!("⚠️ Failed to get connection for loading logs: {}", e);
+                tracing::warn!(error = %e, "Failed to get connection for loading logs");
                 tokio::time::sleep(interval).await;
                 continue;
             }
@@ -176,7 +177,7 @@ pub async fn run_batch_processor(app_state: AppState) {
         let log_names = match logs_result {
             Ok(names) => names,
             Err(e) => {
-                println!("⚠️ Failed to load enabled logs: {}", e);
+                tracing::warn!(error = %e, "Failed to load enabled logs");
                 tokio::time::sleep(interval).await;
                 continue;
             }
@@ -190,7 +191,7 @@ pub async fn run_batch_processor(app_state: AppState) {
                     .to_string()
                     .contains("Another processing batch is running")
             {
-                println!("⚠️ Error processing log '{}': {:?}", log_name, e);
+                tracing::warn!(log_name, error = ?e, "Error processing log");
             }
         }
         let elapsed = now.elapsed();
@@ -204,7 +205,7 @@ pub async fn run_batch_processor(app_state: AppState) {
         tokio::time::sleep(interval).await;
     }
 
-    println!("✅ Batch processor stopped");
+    tracing::info!("Batch processor stopped");
 }
 
 /// Process a single log: copy rows from source tables to `merkle_log` and update tree
@@ -330,6 +331,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
 
 /// Process a batch of rows from configured source tables into `merkle_log` for a specific log
 /// Returns statistics about the batch processing operation
+#[allow(clippy::cognitive_complexity)]
 async fn copy_source_rows(
     app_state: &AppState,
     log_name: &str,
@@ -526,14 +528,15 @@ async fn copy_source_rows(
 ///
 /// Returns an error if any database operations fail, including getting a connection,
 /// loading log configurations, validating sources, or rebuilding individual logs.
+#[allow(clippy::cognitive_complexity)]
 pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
-    println!("🔄 Rebuilding all logs from database...");
+    tracing::info!("Rebuilding all logs from database");
 
     let conn = app_state.db_pool.get().await?;
     let log_names = load_enabled_logs(&conn).await?;
 
     // Validate all source configurations and report issues
-    println!("🔍 Validating source configurations...");
+    tracing::info!("Validating source configurations");
     let validations = crate::service::validate_all_logs(&conn).await?;
     drop(conn);
 
@@ -550,22 +553,26 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
             .collect();
 
         if !invalid_sources.is_empty() {
-            println!(
-                "⚠️  Log '{}' has {} invalid source(s):",
-                validation.log_name,
-                invalid_sources.len()
+            tracing::warn!(
+                log_name = validation.log_name,
+                invalid_count = invalid_sources.len(),
+                "Log has invalid sources"
             );
             for source in invalid_sources {
                 for error in source.errors() {
-                    println!("   - {}: {}", source.source_table, error);
+                    tracing::warn!(
+                        source_table = source.source_table,
+                        error,
+                        "Source validation error"
+                    );
                 }
             }
         }
     }
-    println!("✅ Validation complete\n");
+    tracing::info!("Validation complete");
 
     if log_names.is_empty() {
-        println!("✅ No logs to rebuild");
+        tracing::info!("No logs to rebuild");
         return Ok(());
     }
 
@@ -573,7 +580,7 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
         rebuild_log(app_state, log_name).await?;
     }
 
-    println!("✅ Rebuilt {} log(s)", log_names.len());
+    tracing::info!(log_count = log_names.len(), "Rebuilt logs");
     Ok(())
 }
 
@@ -590,7 +597,7 @@ async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
         .await?;
 
     if rows.is_empty() {
-        println!("  📋 Log '{}': 0 entries", log_name);
+        tracing::debug!(log_name, "Log has no entries");
         return Ok(());
     }
 
@@ -617,10 +624,7 @@ async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
         .merkle_states
         .insert(log_name.to_string(), merkle_state_arc);
 
-    println!(
-        "  📋 Log '{}': {} entries (last_id: {})",
-        log_name, tree_size, last_id
-    );
+    tracing::info!(log_name, tree_size, last_id, "Log rebuilt");
 
     Ok(())
 }
@@ -661,13 +665,13 @@ async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<
         let hash_column: String = row.get(1);
         let id_column: String = row.get(2);
         let timestamp_column: Option<String> = row.get(3);
-        let log_name: String = row.get(4);
+        let log_name_: String = row.get(4);
         configs.push(SourceConfig::new(
             &table_name,
             &hash_column,
             &id_column,
             timestamp_column,
-            &log_name,
+            &log_name_,
         ));
     }
 
@@ -699,9 +703,9 @@ async fn validate_source_tables(
         if exists {
             valid_configs.push(config.clone());
         } else {
-            println!(
-                "⚠️ Skipping configured source '{}' - table does not exist",
-                config.table_name
+            tracing::warn!(
+                source_table = config.table_name,
+                "Skipping configured source - table does not exist"
             );
         }
     }

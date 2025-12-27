@@ -92,7 +92,7 @@ impl LogMetrics {
     /// - `MemoryBackedTree`
     ///     - stores a vector of `LeafHash` entries with size equal to `tree.len()`
     ///     - stores a vector of internal hashes, which "contains all the hashes of the leaves and parents"
-    /// 
+    ///
     /// A tree with n leaves has (2n - 1) nodes, each with a hash of `LEAF_HASH_SIZE` bytes.
     /// Therefore, the internal hashes use (2n - 1) * `LEAF_HASH_SIZE` bytes.
     /// Thus the total size of the `MemoryBackedTree` is approximately:

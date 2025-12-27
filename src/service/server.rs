@@ -12,7 +12,7 @@ use crate::service::state::AppState;
 pub fn create_server(app_state: AppState) -> Router {
     // Fallback handler for unmatched routes
     async fn handle_unmatched() -> (StatusCode, Json<serde_json::Value>) {
-        println!("🚫 Unmatched route accessed");
+        tracing::debug!("Unmatched route accessed");
         (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
@@ -65,7 +65,7 @@ pub fn create_server(app_state: AppState) -> Router {
 /// Returns an error if the `DATABASE_URL` environment variable is not set or if the
 /// database connection pool cannot be created.
 pub async fn initialize_app_state() -> Result<AppState> {
-    println!("Connecting to database...");
+    tracing::info!("Connecting to database");
 
     let db_url = std::env::var("DATABASE_URL")?;
 
@@ -97,6 +97,7 @@ pub async fn initialize_app_state() -> Result<AppState> {
 ///
 /// Returns an error if rebuilding logs from the database fails or if the TCP listener
 /// cannot bind to the specified address.
+#[allow(clippy::cognitive_complexity)]
 pub async fn run_server(app_state: AppState) -> Result<()> {
     // Clone the state for the processing task
     let process_state = app_state.clone();
@@ -114,22 +115,22 @@ pub async fn run_server(app_state: AppState) -> Result<()> {
 
     // Run our HTTP server
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("🌐 HTTP server listening on http://{}", addr);
+    tracing::info!(address = %addr, "HTTP server listening");
     let server = axum::serve(tokio::net::TcpListener::bind(addr).await?, app);
 
     // Wait for Ctrl+C, processor, or server to finish
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            println!("Received Ctrl+C, shutting down...");
+            tracing::info!("Received Ctrl+C, shutting down");
         }
         result = processor => {
             match result {
-                Ok(_) => println!("Processor completed successfully"),
-                Err(e) => println!("Processor error: {}", e),
+                Ok(_) => tracing::info!("Processor completed successfully"),
+                Err(e) => tracing::error!(error = ?e, "Processor error"),
             }
         }
         _ = server => {
-            println!("HTTP server shut down");
+            tracing::info!("HTTP server shut down");
         }
     }
 

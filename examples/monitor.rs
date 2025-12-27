@@ -12,6 +12,8 @@
 //!
 //! Example:
 //!   cargo run --example monitor -- `example_post_log`
+#![allow(clippy::print_stdout)]
+#![allow(clippy::print_stderr)]
 
 use anyhow::Result;
 use base64::Engine;

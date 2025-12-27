@@ -2,6 +2,8 @@
 //!
 //! Tests the Client API for interacting with the mrkl server, including
 //! proof requests, verification, and error handling.
+#![allow(clippy::print_stdout)]
+#![allow(clippy::print_stderr)]
 
 use anyhow::Result;
 use mrkl::service::Client;
@@ -26,7 +28,7 @@ impl TestClient {
     /// connection cannot be established.
     ///
     /// # Panics
-    /// 
+    ///
     /// Panics if `DATABASE_URL` is not set in the environment.
     pub async fn new(api_base_url: &str) -> Result<Self> {
         // Create production HTTP client
@@ -86,14 +88,14 @@ impl TestClient {
 
         for (log_name, description, source_configs) in logs {
             // Create log if it doesn't exist (idempotent)
-            let result = self.db_client
+            let insert_result = self.db_client
                 .execute(
                     "INSERT INTO verification_logs (log_name, description) VALUES ($1, $2) ON CONFLICT (log_name) DO NOTHING",
                     &[&log_name, &description],
                 )
                 .await?;
 
-            if result > 0 {
+            if insert_result > 0 {
                 println!("✅ Created log '{}'", log_name);
             }
 

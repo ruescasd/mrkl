@@ -39,7 +39,6 @@ pub enum VerificationError {
     RewindError(RewindError),
 }
 
-
 /// Error type for tree rewinding operations
 #[derive(Debug)]
 pub enum RewindError {
@@ -75,8 +74,7 @@ impl CtMerkleTree {
     /// Adds a new leaf to the tree and updates the associated maps
     pub fn push(&mut self, leaf: LeafHash) {
         let idx = self.tree.len();
-        self.leaf_hash_to_index
-            .insert(leaf.hash.clone(), idx);
+        self.leaf_hash_to_index.insert(leaf.hash.clone(), idx);
         self.tree.push(leaf);
         // for the moment we must checkpoint after each addition,
         // because in a rebuild scenario we do not know which roots have been published
@@ -90,10 +88,8 @@ impl CtMerkleTree {
     /// Set a root checkpoint for the current tree state
     fn root_checkpoint(&mut self) {
         let root = self.tree.root();
-        self.root_hash_to_size.insert(
-            root.as_bytes().to_vec(),
-            self.tree.len(),
-        );
+        self.root_hash_to_size
+            .insert(root.as_bytes().to_vec(), self.tree.len());
     }
 
     /// Gets the current root hash
@@ -228,7 +224,7 @@ impl CtMerkleTree {
     /// Verifies an inclusion proof for a given leaf hash against a specific historical root
     ///
     /// # Errors
-    /// 
+    ///
     /// - `VerificationError::LeafNotFound`: if the leaf hash does not exist in the tree,
     /// - `VerificationError::LeafNotPresentAtTree`: if the leaf was added after the specified root.
     /// - `VerificationError::RewindError`: if rewinding to the specified root fails.
@@ -257,7 +253,7 @@ impl CtMerkleTree {
     /// # Errors
     ///
     /// - `ProofError::RootNotFound`: if either root does not exist in the tree's history,
-    /// - `ProofError::SameRoot`: if both roots are identical, 
+    /// - `ProofError::SameRoot`: if both roots are identical,
     /// - `ProofError::InvalidRootOrder`: if the old root is from a tree that is not strictly smaller than the new root's tree.
     /// - `ProofError::RewindError`: if rewinding to `new_root` fails
     pub fn prove_consistency_between(
@@ -336,7 +332,10 @@ impl CtMerkleTree {
         let old_root_hash = ct_merkle::RootHash::new(old_digest, old_size);
 
         // Verify the proof using the new tree's root
-        new_tree.root().verify_consistency(&old_root_hash, proof).map_err(VerificationError::CtConsistencyError)
+        new_tree
+            .root()
+            .verify_consistency(&old_root_hash, proof)
+            .map_err(VerificationError::CtConsistencyError)
     }
 
     /// Helper to generate inclusion proof for a given tree and leaf hash
@@ -369,7 +368,7 @@ impl CtMerkleTree {
         // Get index for this leaf hash
         let idx = match self.leaf_hash_to_index.get(leaf_hash) {
             Some(idx) => *idx,
-            None => return Err(VerificationError::LeafNotFound)
+            None => return Err(VerificationError::LeafNotFound),
         };
 
         // Create leaf hash wrapper
@@ -381,7 +380,8 @@ impl CtMerkleTree {
         }
 
         let root = tree.root();
-        root.verify_inclusion(&leaf, idx, proof).map_err(VerificationError::CtInclusionError)
+        root.verify_inclusion(&leaf, idx, proof)
+            .map_err(VerificationError::CtInclusionError)
     }
 }
 
@@ -420,9 +420,11 @@ mod tests {
             .expect("Should create proof");
 
         // Verify the proof
-        let result = tree
-            .verify_inclusion(&leaf_hash, &proof);
-        assert!(result.is_ok(), "Valid inclusion proof should verify successfully");
+        let result = tree.verify_inclusion(&leaf_hash, &proof);
+        assert!(
+            result.is_ok(),
+            "Valid inclusion proof should verify successfully"
+        );
     }
 
     #[test]
@@ -437,9 +439,11 @@ mod tests {
             .expect("Should create proof");
 
         // Try to verify proof with wrong leaf hash
-        let result = tree
-            .verify_inclusion(&wrong_hash, &proof);
-        assert!(result.is_err(), "Invalid inclusion proof should fail verification");
+        let result = tree.verify_inclusion(&wrong_hash, &proof);
+        assert!(
+            result.is_err(),
+            "Invalid inclusion proof should fail verification"
+        );
     }
 
     #[test]
@@ -459,10 +463,12 @@ mod tests {
         let proof = tree
             .prove_consistency(&old_root)
             .expect("Should create proof");
-        let result = tree
-            .verify_consistency(&old_root, &proof);
-        
-        assert!(result.is_ok(), "Valid consistency proof should verify successfully");
+        let result = tree.verify_consistency(&old_root, &proof);
+
+        assert!(
+            result.is_ok(),
+            "Valid consistency proof should verify successfully"
+        );
     }
 
     #[test]
@@ -487,9 +493,8 @@ mod tests {
             .expect("Should create proof");
 
         // Try to verify with fake root
-        let result = tree
-            .verify_consistency(&fake_root, &proof);
-        
+        let result = tree.verify_consistency(&fake_root, &proof);
+
         assert!(
             result.is_err(),
             "Consistency proof with wrong root should fail verification"
@@ -534,27 +539,27 @@ mod tests {
         tree.push(leaf3);
 
         // Try to rewind to second root
-        let historical_tree = tree.rewind(&root2).expect("Should rewind to second root");
+        let historical_tree_2 = tree.rewind(&root2).expect("Should rewind to second root");
         assert_eq!(
-            historical_tree.len(),
+            historical_tree_2.len(),
             2,
             "Historical tree should have 2 leaves"
         );
         assert_eq!(
-            historical_tree.root().as_bytes().to_vec(),
+            historical_tree_2.root().as_bytes().to_vec(),
             root2,
             "Historical tree should have correct root"
         );
 
         // Try to rewind to first root
-        let historical_tree = tree.rewind(&root1).expect("Should rewind to first root");
+        let historical_tree_1 = tree.rewind(&root1).expect("Should rewind to first root");
         assert_eq!(
-            historical_tree.len(),
+            historical_tree_1.len(),
             1,
             "Historical tree should have 1 leaf"
         );
         assert_eq!(
-            historical_tree.root().as_bytes().to_vec(),
+            historical_tree_1.root().as_bytes().to_vec(),
             root1,
             "Historical tree should have correct root"
         );
@@ -590,8 +595,9 @@ mod tests {
             .prove_inclusion_at_root(&leaf1_hash, &root1)
             .expect("Should create proof");
         assert!(
-            tree.verify_inclusion_at_root(&leaf1_hash, &root1, &proof1).is_ok(),
-                "Should verify"
+            tree.verify_inclusion_at_root(&leaf1_hash, &root1, &proof1)
+                .is_ok(),
+            "Should verify"
         );
 
         // For leaf1 at root2 (still present)
@@ -599,8 +605,9 @@ mod tests {
             .prove_inclusion_at_root(&leaf1_hash, &root2)
             .expect("Should create proof");
         assert!(
-            tree.verify_inclusion_at_root(&leaf1_hash, &root2, &proof2).is_ok(),
-                "Should verify"
+            tree.verify_inclusion_at_root(&leaf1_hash, &root2, &proof2)
+                .is_ok(),
+            "Should verify"
         );
 
         // For leaf2 at root1 (wasn't present yet)
@@ -614,8 +621,9 @@ mod tests {
             .prove_inclusion_at_root(&leaf2_hash, &root2)
             .expect("Should create proof");
         assert!(
-            tree.verify_inclusion_at_root(&leaf2_hash, &root2, &proof3).is_ok(),
-                "Should verify"
+            tree.verify_inclusion_at_root(&leaf2_hash, &root2, &proof3)
+                .is_ok(),
+            "Should verify"
         );
 
         // For non-existent root
@@ -625,16 +633,16 @@ mod tests {
             Err(ProofError::RewindError(RewindError::RootNotFound))
         ));
         assert!(
-            tree
-                .verify_inclusion_at_root(&leaf1_hash, &fake_root, &proof1).is_err(),
-                "Should return false"
+            tree.verify_inclusion_at_root(&leaf1_hash, &fake_root, &proof1)
+                .is_err(),
+            "Should return false"
         );
 
         // For incorrect proof (using proof from different root)
         assert!(
-            tree
-                .verify_inclusion_at_root(&leaf1_hash, &root2, &proof1).is_err(),
-                "Should return false"
+            tree.verify_inclusion_at_root(&leaf1_hash, &root2, &proof1)
+                .is_err(),
+            "Should return false"
         );
     }
 
@@ -662,8 +670,9 @@ mod tests {
             .prove_consistency_between(&root1, &root2)
             .expect("Should create proof between root1 and root2");
         assert!(
-            tree.verify_consistency_between(&root1, &root2, &proof1).is_ok(),
-                "Should verify between root1 and root2"
+            tree.verify_consistency_between(&root1, &root2, &proof1)
+                .is_ok(),
+            "Should verify between root1 and root2"
         );
 
         // Between root1 and root3
@@ -671,8 +680,9 @@ mod tests {
             .prove_consistency_between(&root1, &root3)
             .expect("Should create proof between root1 and root3");
         assert!(
-            tree.verify_consistency_between(&root1, &root3, &proof2).is_ok(),
-                "Should verify between root1 and root3"
+            tree.verify_consistency_between(&root1, &root3, &proof2)
+                .is_ok(),
+            "Should verify between root1 and root3"
         );
 
         // Between root2 and root3
@@ -680,8 +690,9 @@ mod tests {
             .prove_consistency_between(&root2, &root3)
             .expect("Should create proof between root2 and root3");
         assert!(
-            tree.verify_consistency_between(&root2, &root3, &proof3).is_ok(),
-                "Should verify between root2 and root3"
+            tree.verify_consistency_between(&root2, &root3, &proof3)
+                .is_ok(),
+            "Should verify between root2 and root3"
         );
 
         // Test invalid cases
@@ -705,16 +716,16 @@ mod tests {
             Err(ProofError::RootNotFound)
         ));
         assert!(
-            tree
-                .verify_consistency_between(&root1, &fake_root, &proof1).is_err(),
-                "Should return false"
+            tree.verify_consistency_between(&root1, &fake_root, &proof1)
+                .is_err(),
+            "Should return false"
         );
 
         // Wrong proof (using proof between different roots)
         assert!(
-            tree
-                .verify_consistency_between(&root1, &root3, &proof1).is_err(),
-                "Should return false"
+            tree.verify_consistency_between(&root1, &root3, &proof1)
+                .is_err(),
+            "Should return false"
         );
     }
 }

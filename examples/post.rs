@@ -9,6 +9,8 @@
 //!
 //! Usage:
 //!   cargo run --example post
+#![allow(clippy::print_stdout)]
+#![allow(clippy::print_stderr)]
 
 use anyhow::Result;
 use base64::Engine;

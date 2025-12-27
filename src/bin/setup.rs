@@ -3,6 +3,9 @@
 //! Creates the necessary `PostgreSQL` tables and functions for mrkl operation.
 //! The schema includes `verification_logs`, `verification_sources`, and `merkle_log` tables.
 //!
+
+#![allow(clippy::print_stdout)]
+#![allow(clippy::print_stderr)]
 //! # Usage
 //!
 //! ```bash
