@@ -177,7 +177,7 @@ async fn wait_for_log_discovery(client: &Client) -> Result<()> {
 /// Waits for the specific entry to be processed into the merkle log
 /// (also ensures the log itself has been discovered by the server)
 async fn wait_for_entry_in_log(client: &Client, data: &str) -> Result<()> {
-    wait_for_log_discovery(&client).await?;
+    wait_for_log_discovery(client).await?;
     
     println!("⏳ Waiting for entry to be processed into merkle log...");
     
