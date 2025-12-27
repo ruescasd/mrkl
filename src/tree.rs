@@ -20,6 +20,8 @@ pub enum ProofError {
     SameRoot,
     /// The tree rewind operation failed
     RewindError(RewindError),
+    /// The requested size is too large to fit into a usize
+    SizeTooLarge,
 }
 
 /// Error type for proof operations
@@ -46,6 +48,8 @@ pub enum RewindError {
     RootNotFound,
     /// The tree's actual root doesn't match the expected root after rewinding
     UnexpectedRoot(Vec<u8>),
+    /// The requested leaf index is too large to fit into a usize
+    SizeTooLarge,
 }
 
 /// SHA-256 hash size in bytes
@@ -183,8 +187,10 @@ impl CtMerkleTree {
         // Create new tree
         let mut historical_tree = MemoryBackedTree::new();
 
+        let size_usize = usize::try_from(*size).map_err(|_| RewindError::SizeTooLarge)?;
+
         // Take first 'size' leaves from current tree
-        for leaf in self.tree.items().iter().take(*size as usize) {
+        for leaf in self.tree.items().iter().take(size_usize) {
             historical_tree.push(leaf.clone());
         }
 
@@ -295,10 +301,10 @@ impl CtMerkleTree {
             &self.rewind(new_root).map_err(ProofError::RewindError)?
         };
 
-
+        let num_additions_usize = usize::try_from(num_additions).map_err(|_| ProofError::SizeTooLarge)?; 
 
         // Generate proof from the historical tree state
-        Ok(new_tree.prove_consistency(num_additions as usize))
+        Ok(new_tree.prove_consistency(num_additions_usize))
     }
 
     /// Verifies a consistency proof between any two historical roots
@@ -361,7 +367,9 @@ impl CtMerkleTree {
             return Err(ProofError::LeafNotPresentAtTree);
         }
 
-        Ok(tree.prove_inclusion(*idx as usize))
+        let idx_usize = usize::try_from(*idx).map_err(|_| ProofError::SizeTooLarge)?;
+
+        Ok(tree.prove_inclusion(idx_usize))
     }
 
     /// Helper to verify inclusion proof for a given tree and leaf hash

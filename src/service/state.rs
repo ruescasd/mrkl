@@ -21,7 +21,7 @@ impl ProcessorState {
     /// Converts a u8 value to `ProcessorState`
     ///
     /// Used to read the atomic state value. Unknown values default to Running.
-    pub fn from_u8(value: u8) -> Self {
+    pub const fn from_u8(value: u8) -> Self {
         match value {
             1 => ProcessorState::Paused,
             2 => ProcessorState::Stopping,

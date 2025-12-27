@@ -454,7 +454,9 @@ async fn test_large_batch_performance() -> Result<()> {
     ];
 
     for idx in sample_indices {
-        let (entry, hash) = &all_hashes[idx];
+        let (entry, hash) = all_hashes
+            .get(idx)
+            .expect("sample index should be within bounds");
         let proof = client
             .client
             .get_inclusion_proof("test_log_single_source", entry)
@@ -515,8 +517,8 @@ async fn test_source_log_setup() -> Result<()> {
     // Verify merkle_log IDs are strictly increasing (monotonic)
     // They won't be sequential (1,2,3...) because the ID sequence is shared across all logs
     for i in 1..rows.len() {
-        let prev_id: i64 = rows[i - 1].get(2);
-        let curr_id: i64 = rows[i].get(2);
+        let prev_id: i64 = rows.get(i - 1).expect("prev row exists").get(2);
+        let curr_id: i64 = rows.get(i).expect("curr row exists").get(2);
         assert!(
             curr_id > prev_id,
             "Merkle log IDs should be strictly increasing: {} should be > {}",

@@ -31,7 +31,7 @@ pub enum ApiResponse<T> {
 
 impl<T: Serialize> ApiResponse<T> {
     /// Creates a successful response
-    pub fn success(data: T) -> Self {
+    pub const fn success(data: T) -> Self {
         Self::Success(data)
     }
 

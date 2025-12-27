@@ -57,9 +57,10 @@ async fn main() -> Result<()> {
     println!("✅ Received proof:");
     println!("   - Leaf index: {}", proof.index);
     println!("   - Tree size: {}", proof.tree_size);
+    let root_preview = proof.root.get(..8).unwrap_or(&proof.root);
     println!(
         "   - Root: {}...",
-        base64::engine::general_purpose::STANDARD.encode(&proof.root[..8])
+        base64::engine::general_purpose::STANDARD.encode(root_preview)
     );
     println!();
 

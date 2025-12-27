@@ -47,15 +47,17 @@ impl Client {
             .await?;
 
         // Check for error response
-        if response["status"].as_str() == Some("error") {
-            return Err(anyhow::anyhow!(
-                "Error getting log size: {}",
-                response["error"].as_str().unwrap_or("unknown error")
-            ));
+        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
+            let error_msg = response
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(anyhow::anyhow!("Error getting log size: {}", error_msg));
         }
 
-        let size = response["size"]
-            .as_u64()
+        let size = response
+            .get("size")
+            .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow::anyhow!("Invalid size response"))?;
 
         Ok(size)
@@ -77,16 +79,18 @@ impl Client {
             .await?;
 
         // Check for error response
-        if response["status"].as_str() == Some("error") {
-            return Err(anyhow::anyhow!(
-                "Error getting root: {}",
-                response["error"].as_str().unwrap_or("unknown error")
-            ));
+        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
+            let error_msg = response
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(anyhow::anyhow!("Error getting root: {}", error_msg));
         }
 
         // Parse the base64 encoded root from the response
-        let root_b64 = response["merkle_root"]
-            .as_str()
+        let root_b64 = response
+            .get("merkle_root")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Invalid root response"))?;
 
         // Decode base64 back to bytes
@@ -123,15 +127,19 @@ impl Client {
         let response = response.json::<serde_json::Value>().await?;
 
         // Check for error response
-        if response["status"].as_str() == Some("error") {
-            return Err(anyhow::anyhow!(
-                "Error getting inclusion proof: {}",
-                response["error"].as_str().unwrap_or("unknown error")
-            ));
+        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
+            let error_msg = response
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(anyhow::anyhow!("Error getting inclusion proof: {}", error_msg));
         }
 
         // Parse into our structured MerkleProof type
-        let proof = serde_json::from_value(response["proof"].clone())?;
+        let proof = response
+            .get("proof")
+            .ok_or_else(|| anyhow::anyhow!("Missing proof field in response"))?;
+        let proof = serde_json::from_value(proof.clone())?;
         Ok(proof)
     }
 
@@ -162,15 +170,19 @@ impl Client {
         let response = response.json::<serde_json::Value>().await?;
 
         // Check for error response
-        if response["status"].as_str() == Some("error") {
-            return Err(anyhow::anyhow!(
-                "Error getting consistency proof: {}",
-                response["error"].as_str().unwrap_or("unknown error")
-            ));
+        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
+            let error_msg = response
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(anyhow::anyhow!("Error getting consistency proof: {}", error_msg));
         }
 
         // Parse into our structured ConsistencyProof type
-        let proof = serde_json::from_value(response["proof"].clone())?;
+        let proof = response
+            .get("proof")
+            .ok_or_else(|| anyhow::anyhow!("Missing proof field in response"))?;
+        let proof = serde_json::from_value(proof.clone())?;
         Ok(proof)
     }
 
@@ -224,16 +236,18 @@ impl Client {
             .await?;
 
         // Check for error response
-        if response["status"].as_str() == Some("error") {
-            return Err(anyhow::anyhow!(
-                "Error checking leaf existence: {}",
-                response["error"].as_str().unwrap_or("unknown error")
-            ));
+        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
+            let error_msg = response
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(anyhow::anyhow!("Error checking leaf existence: {}", error_msg));
         }
 
         // Extract exists field
-        let exists = response["exists"]
-            .as_bool()
+        let exists = response
+            .get("exists")
+            .and_then(|v| v.as_bool())
             .ok_or_else(|| anyhow::anyhow!("Invalid has_leaf response"))?;
 
         Ok(exists)
@@ -259,16 +273,18 @@ impl Client {
             .await?;
 
         // Check for error response
-        if response["status"].as_str() == Some("error") {
-            return Err(anyhow::anyhow!(
-                "Error checking root existence: {}",
-                response["error"].as_str().unwrap_or("unknown error")
-            ));
+        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
+            let error_msg = response
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(anyhow::anyhow!("Error checking root existence: {}", error_msg));
         }
 
         // Extract exists field
-        let exists = response["exists"]
-            .as_bool()
+        let exists = response
+            .get("exists")
+            .and_then(|v| v.as_bool())
             .ok_or_else(|| anyhow::anyhow!("Invalid has_root response"))?;
 
         Ok(exists)
@@ -290,16 +306,18 @@ impl Client {
             .await?;
 
         // Check for error response
-        if response["status"].as_str() == Some("error") {
-            return Err(anyhow::anyhow!(
-                "Error checking log existence: {}",
-                response["error"].as_str().unwrap_or("unknown error")
-            ));
+        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
+            let error_msg = response
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(anyhow::anyhow!("Error checking log existence: {}", error_msg));
         }
 
         // Extract exists field
-        let exists = response["exists"]
-            .as_bool()
+        let exists = response
+            .get("exists")
+            .and_then(|v| v.as_bool())
             .ok_or_else(|| anyhow::anyhow!("Invalid has_log response"))?;
 
         Ok(exists)

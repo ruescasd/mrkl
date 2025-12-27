@@ -157,6 +157,9 @@ pub struct LeafHash {
 
 impl LeafHash {
     /// Creates a new `LeafHash` from a given hash value
+    ///
+    /// Note: Cannot be made `const` as `Vec<u8>` is not yet const-compatible
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(hash: Vec<u8>) -> Self {
         Self { hash }
     }

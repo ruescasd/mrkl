@@ -39,12 +39,13 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: {} <log_name>", args[0]);
-        eprintln!("\nExample: {} example_post_log", args[0]);
+        let program_name = args.first().map(|s| s.as_str()).unwrap_or("monitor");
+        eprintln!("Usage: {} <log_name>", program_name);
+        eprintln!("\nExample: {} example_post_log", program_name);
         std::process::exit(1);
     }
 
-    let log_name = &args[1];
+    let log_name = args.get(1).expect("log_name argument required");
 
     // Configuration
     let server_url =
@@ -193,6 +194,6 @@ fn print_state(state: &LogState) {
 }
 
 /// Returns the minimum of two values.
-fn min(a: usize, b: usize) -> usize {
+const fn min(a: usize, b: usize) -> usize {
     if a < b { a } else { b }
 }

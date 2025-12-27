@@ -124,7 +124,7 @@ impl LogMetrics {
     /// 
     /// `arithmetic_side_effects`: tree sizes will never approach `u64::MAX` in practice, resource consumption will limit much earlier.
     #[allow(clippy::arithmetic_side_effects)]
-    pub fn tree_size_bytes(n: u64) -> u64 {
+    pub const fn tree_size_bytes(n: u64) -> u64 {
         // we do not use 3n - 1 and just use 3n to avoid underflow when n = 0
         let tree = (3 * n) * LEAF_HASH_SIZE;
         let maps = (2 * n) * (LEAF_HASH_SIZE + 8);
