@@ -247,7 +247,7 @@ async fn test_consistency_proofs() -> Result<()> {
     }
 
     // Add a final entry to change the tree state
-    let entry = format!("last");
+    let entry = "last".to_string();
     client.add_entry(&entry).await?;
     current_size += 1;
     client
@@ -767,12 +767,10 @@ async fn test_no_timestamp_ordering() -> Result<()> {
     println!("\n✅ Verifying ordering constraints:");
 
     // Create a list of (id, table_name, proof_index) for verification
-    let mut entries = vec![
-        (id1, "source_no_timestamp_b", proof1.index),
+    let mut entries = [(id1, "source_no_timestamp_b", proof1.index),
         (id2, "source_no_timestamp", proof2.index),
         (id3, "source_no_timestamp_b", proof3.index),
-        (id4, "source_no_timestamp", proof4.index),
-    ];
+        (id4, "source_no_timestamp", proof4.index)];
 
     // Sort by (id, table_name) to get expected order
     entries.sort_by(|a, b| match a.0.cmp(&b.0) {
