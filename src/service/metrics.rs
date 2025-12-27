@@ -8,6 +8,7 @@ use crate::tree::LEAF_HASH_SIZE;
 /// Per-log batch processing metrics
 #[derive(Debug, Clone)]
 pub struct LogMetrics {
+    /// Name of the log these metrics belong to
     pub log_name: String,
     /// Number of rows processed in the last batch
     pub last_batch_rows: u64,
@@ -36,6 +37,7 @@ pub struct LogMetrics {
 }
 
 impl LogMetrics {
+    /// Creates a new LogMetrics instance for the given log
     pub fn new(log_name: String) -> Self {
         Self {
             log_name,
@@ -114,7 +116,7 @@ impl LogMetrics {
     /// =   (3n - 1) * LEAF_HASH_SIZE + 2n * (LEAF_HASH_SIZE + 8)
     /// 
     /// Due to overhead from HashMap and Vector structures, actual memory usage may be higher, so we apply
-    /// a multiplier of 1.2 to account for that.
+    /// a multiplier of 1.2 to try to account for that.
     pub fn tree_size_bytes(n: u64) -> u64 {
         // we do not use 3n - 1 and just use 3n to avoid underflow when n = 0
         let tree = (3 * n) * LEAF_HASH_SIZE;
@@ -138,6 +140,7 @@ pub struct GlobalMetrics {
 }
 
 impl GlobalMetrics {
+    /// Creates a new GlobalMetrics instance with default values
     pub fn new() -> Self {
         Self {
             last_cycle_duration_ms: 0,
@@ -166,6 +169,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    /// Creates a new Metrics container with empty log metrics and default global metrics
     pub fn new() -> Self {
         Self {
             log_metrics: Arc::new(RwLock::new(HashMap::new())),

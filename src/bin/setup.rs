@@ -1,4 +1,15 @@
-/// cargo run --bin setup -- --reset
+//! Database setup utility for mrkl
+//!
+//! Creates the necessary PostgreSQL tables and functions for mrkl operation.
+//! The schema includes verification_logs, verification_sources, and merkle_log tables.
+//!
+//! # Usage
+//!
+//! ```bash
+//! cargo run --bin setup           # Create/update schema
+//! cargo run --bin setup -- --reset # Drop and recreate all tables
+//! ```
+
 use anyhow::Result;
 use std::env;
 use tokio_postgres::{Client, NoTls};

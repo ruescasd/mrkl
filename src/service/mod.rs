@@ -1,10 +1,25 @@
+/// HTTP client for interacting with the merkle log service
 pub mod client;
+
+/// Performance metrics tracking for batch processing
 pub mod metrics;
+
+/// Background batch processor that continuously merges data from source tables
 pub mod processor;
+
+/// HTTP response types and error handling for the API
 pub mod responses;
+
+/// HTTP route handlers for all verification endpoints
 pub mod routes;
+
+/// Server initialization and configuration
 pub mod server;
+
+/// Application state management including merkle tree storage
 pub mod state;
+
+/// Database schema validation utilities
 pub mod validation;
 
 pub use client::Client;

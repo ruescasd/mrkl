@@ -4,33 +4,54 @@ use deadpool_postgres::Object as PooledConnection;
 /// Validation result for a single source configuration
 #[derive(Debug, Clone)]
 pub struct SourceValidation {
+    /// Name of the source table being validated
     pub source_table: String,
+    /// Name of the log this source belongs to
     pub log_name: String,
+    /// Whether the source table exists in the database
     pub table_exists: bool,
+    /// Validation result for the ID column (if present)
     pub id_column_valid: Option<ColumnValidation>,
+    /// Validation result for the hash column (if present)
     pub hash_column_valid: Option<ColumnValidation>,
+    /// Validation result for the timestamp column (if present)
     pub timestamp_column_valid: Option<ColumnValidation>,
 }
 
 /// Validation result for a single column
 #[derive(Debug, Clone)]
 pub struct ColumnValidation {
+    /// Name of the column being validated
     pub column_name: String,
+    /// Whether the column exists in the table
     pub exists: bool,
+    /// The actual PostgreSQL data type of the column (if it exists)
     pub data_type: Option<String>,
+    /// The expected PostgreSQL data type for this column
     pub expected_type: String,
+    /// Whether the actual type matches the expected type
     pub type_matches: bool,
 }
 
 /// Validation result for a single log
 #[derive(Debug, Clone)]
 pub struct LogValidation {
+    /// Name of the log being validated
     pub log_name: String,
+    /// Whether the log is enabled in the configuration
     pub enabled: bool,
+    /// Validation results for all sources belonging to this log
     pub sources: Vec<SourceValidation>,
 }
 
 impl SourceValidation {
+    /// Checks if this source configuration is valid
+    /// 
+    /// A source is valid if:
+    /// - The table exists
+    /// - The ID column exists and has the correct type
+    /// - The hash column exists and has the correct type
+    /// - The timestamp column (if required) exists and has the correct type
     pub fn is_valid(&self) -> bool {
         self.table_exists
             && self.id_column_valid.as_ref().map_or(false, |v| v.type_matches)
@@ -38,6 +59,9 @@ impl SourceValidation {
             && self.timestamp_column_valid.as_ref().map_or(true, |v| v.type_matches) // Optional, so true if None
     }
 
+    /// Returns a list of human-readable validation error messages
+    /// 
+    /// If the source is valid, returns an empty vector.
     pub fn errors(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
@@ -90,14 +114,19 @@ impl SourceValidation {
 }
 
 impl LogValidation {
+    /// Checks if this log configuration is valid
+    /// 
+    /// A log is valid if it has at least one source and all sources are valid.
     pub fn is_valid(&self) -> bool {
         !self.sources.is_empty() && self.sources.iter().all(|s| s.is_valid())
     }
 
+    /// Returns the number of valid sources in this log
     pub fn valid_source_count(&self) -> usize {
         self.sources.iter().filter(|s| s.is_valid()).count()
     }
 
+    /// Returns the number of invalid sources in this log
     pub fn invalid_source_count(&self) -> usize {
         self.sources.iter().filter(|s| !s.is_valid()).count()
     }

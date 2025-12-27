@@ -1,5 +1,17 @@
-/// cargo run --bin main
-/// cargo run --bin main -- --verify-db
+//! Main server binary for mrkl
+//!
+//! Runs the HTTP API server and batch processor that monitors PostgreSQL tables
+//! and builds merkle trees for Certificate Transparency-style verification.
+//!
+//! # Usage
+//!
+//! ```bash
+//! cargo run --bin main
+//! cargo run --bin main -- --verify-db
+//! ```
+//!
+//! The `--verify-db` flag validates the database schema without starting the server.
+
 use anyhow::Result;
 use mrkl::service;
 

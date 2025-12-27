@@ -17,12 +17,20 @@ use crate::{ConsistencyProof, InclusionProof};
 // All database operations are handled exclusively by the batch processor
 // This ensures clean separation: HTTP handlers never block on database I/O
 
+/// Query parameters for inclusion proof requests
+/// 
+/// Used by the `/logs/{log_name}/proof` endpoint to specify which leaf to prove inclusion for.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InclusionQuery {
+    /// Base64-encoded leaf hash to generate inclusion proof for
     #[serde(with = "crate::service::routes::proof_bytes_format")]
     pub hash: Vec<u8>,
 }
 
+/// Query parameters for consistency proof requests
+/// 
+/// Used by the `/logs/{log_name}/consistency` endpoint to prove consistency
+/// between two tree states.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConsistencyQuery {
     /// The root hash of the historical tree to prove consistency with
@@ -30,6 +38,10 @@ pub struct ConsistencyQuery {
     pub old_root: Vec<u8>,
 }
 
+/// Query parameters for leaf existence checks
+/// 
+/// Used by the `/logs/{log_name}/has_leaf` endpoint to check if a leaf exists
+/// in the current tree state.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HasLeafQuery {
     /// The leaf hash to check for
@@ -37,6 +49,10 @@ pub struct HasLeafQuery {
     pub hash: Vec<u8>,
 }
 
+/// Query parameters for root existence checks
+/// 
+/// Used by the `/logs/{log_name}/has_root` endpoint to check if a root hash
+/// appears in the log's merkle tree history.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HasRootQuery {
     /// The root hash to check for
@@ -44,7 +60,17 @@ pub struct HasRootQuery {
     pub root: Vec<u8>,
 }
 
-// Handler for the /logs/{log_name}/root endpoint
+/// Get the current merkle root for a log
+/// 
+/// Endpoint: `GET /logs/{log_name}/root`
+/// 
+/// Returns the current merkle root hash, tree size, and last processed entry ID.
+/// This is the primary endpoint for clients to discover the current log state.
+/// 
+/// # Errors
+/// 
+/// Returns `LogNotFound` if the log doesn't exist, or `EmptyTree` if the log
+/// has no entries yet.
 pub async fn get_merkle_root(
     Path(log_name): Path<String>,
     State(state): State<AppState>,
@@ -61,17 +87,17 @@ pub async fn get_merkle_root(
     if merkle_state.tree.len() == 0 {
         return ApiError::EmptyTree(log_name).to_response();
     }
-    let root = merkle_state.tree.root();
 
-    ApiResponse::success(RootResponse {
-        log_name,
-        merkle_root: base64::engine::general_purpose::STANDARD.encode(&root),
-        tree_size: merkle_state.tree.len() as u64,
-        last_processed_id: merkle_state.last_processed_id,
-    })
+    ApiResponse::success(RootResponse::from_merkle_state(log_name, &merkle_state))
 }
 
-// Handler for the /logs/{log_name}/size endpoint
+/// Get the size of a merkle log
+/// 
+/// Endpoint: `GET /logs/{log_name}/size`
+/// 
+/// Returns the number of leaves in the merkle tree. Returns 0 if the log
+/// doesn't exist yet. Use `/logs/{log_name}/exists` to distinguish between
+/// an empty log and a non-existent log.
 pub async fn get_log_size(
     Path(log_name): Path<String>,
     State(state): State<AppState>,
@@ -91,7 +117,23 @@ pub async fn get_log_size(
     ApiResponse::success(SizeResponse { log_name, size: size as u64 })
 }
 
-// Handler for the /logs/{log_name}/proof endpoint that generates inclusion proofs
+/// Generate an inclusion proof for a leaf in the merkle tree
+/// 
+/// Endpoint: `GET /logs/{log_name}/proof?hash=<base64_hash>`
+/// 
+/// Generates a cryptographic proof that the specified leaf exists in the tree.
+/// The proof is verified before being returned to ensure correctness.
+/// 
+/// # Query Parameters
+/// 
+/// - `hash`: Base64-encoded leaf hash to prove inclusion for
+/// 
+/// # Errors
+/// 
+/// - `InvalidRequest`: Query parameter parsing failed or hash not base64
+/// - `LogNotFound`: The specified log doesn't exist
+/// - `ProofGenerationFailed`: Failed to generate the proof (leaf not found)
+/// - `ProofVerificationFailed`: Generated proof failed verification (internal error)
 pub async fn get_inclusion_proof(
     Path(log_name): Path<String>,
     query_result: Result<Query<InclusionQuery>, axum::extract::rejection::QueryRejection>,
@@ -152,11 +194,33 @@ pub async fn get_inclusion_proof(
                 proof: inclusion_proof,
             })
         }
-        Ok(false) | Err(_) => ApiError::ProofVerificationFailed.to_response(),
+        Ok(false) => ApiError::ProofVerificationFailed(
+            "Proof verification returned false".to_string()
+        ).to_response(),
+        Err(e) => ApiError::ProofVerificationFailed(
+            format!("Proof verification error: {:?}", e)
+        ).to_response(),
     }
 }
 
-// Handler for the /logs/{log_name}/consistency endpoint that generates consistency proofs
+/// Generate a consistency proof between two tree states
+/// 
+/// Endpoint: `GET /logs/{log_name}/consistency?old_root=<base64_root>`
+/// 
+/// Generates a cryptographic proof that the tree grew in an append-only manner
+/// from the historical state (identified by `old_root`) to the current state.
+/// This is essential for Certificate Transparency-style auditing.
+/// 
+/// # Query Parameters
+/// 
+/// - `old_root`: Base64-encoded root hash of the historical tree state
+/// 
+/// # Errors
+/// 
+/// - `InvalidRequest`: Query parameter parsing failed or old_root not base64
+/// - `LogNotFound`: The specified log doesn't exist
+/// - `ProofGenerationFailed`: Failed to generate the proof (old_root not found in history)
+/// - `ProofVerificationFailed`: Generated proof failed verification (internal error)
 pub async fn get_consistency_proof(
     Path(log_name): Path<String>,
     query_result: Result<Query<ConsistencyQuery>, axum::extract::rejection::QueryRejection>,
@@ -217,11 +281,31 @@ pub async fn get_consistency_proof(
                 proof: consistency_proof,
             })
         }
-        Ok(false) | Err(_) => ApiError::ProofVerificationFailed.to_response(),
+        Ok(false) => ApiError::ProofVerificationFailed(
+            "Proof verification returned false".to_string()
+        ).to_response(),
+        Err(e) => ApiError::ProofVerificationFailed(
+            format!("Proof verification error: {:?}", e)
+        ).to_response(),
     }
 }
 
-// Handler for the /logs/{log_name}/has_leaf endpoint that checks if a leaf exists
+/// Check if a leaf exists in the merkle tree
+/// 
+/// Endpoint: `GET /logs/{log_name}/has_leaf?hash=<base64_hash>`
+/// 
+/// Performs an O(1) lookup to check if the specified leaf exists in the current
+/// tree state. This is faster than requesting an inclusion proof when you only
+/// need existence checking.
+/// 
+/// # Query Parameters
+/// 
+/// - `hash`: Base64-encoded leaf hash to check for
+/// 
+/// # Errors
+/// 
+/// - `InvalidRequest`: Query parameter parsing failed or hash not base64
+/// - `LogNotFound`: The specified log doesn't exist
 pub async fn has_leaf(
     Path(log_name): Path<String>,
     query_result: Result<Query<HasLeafQuery>, axum::extract::rejection::QueryRejection>,
@@ -257,7 +341,22 @@ pub async fn has_leaf(
     ApiResponse::success(HasLeafResponse { log_name, exists })
 }
 
-// Handler for the /logs/{log_name}/has_root endpoint that checks if a root exists
+/// Check if a root hash exists in the log's history
+/// 
+/// Endpoint: `GET /logs/{log_name}/has_root?root=<base64_root>`
+/// 
+/// Performs an O(1) lookup to check if the specified root hash appears in the
+/// merkle tree's history. Useful for verifying that you've observed a particular
+/// tree state before requesting a consistency proof.
+/// 
+/// # Query Parameters
+/// 
+/// - `root`: Base64-encoded root hash to check for
+/// 
+/// # Errors
+/// 
+/// - `InvalidRequest`: Query parameter parsing failed or root not base64
+/// - `LogNotFound`: The specified log doesn't exist
 pub async fn has_root(
     Path(log_name): Path<String>,
     query_result: Result<Query<HasRootQuery>, axum::extract::rejection::QueryRejection>,
@@ -293,7 +392,13 @@ pub async fn has_root(
     ApiResponse::success(HasRootResponse { log_name, exists })
 }
 
-// Handler for the /logs/{log_name}/exists endpoint that checks if a log exists
+/// Check if a log exists on the server
+/// 
+/// Endpoint: `GET /logs/{log_name}/exists`
+/// 
+/// Returns whether the named log has been discovered and initialized by the
+/// batch processor. This disambiguates between an empty log and a non-existent
+/// log, which both return size 0 from the `/size` endpoint.
 pub async fn has_log(
     Path(log_name): Path<String>,
     State(state): State<AppState>,
@@ -344,7 +449,9 @@ pub async fn metrics(
 /// Response for admin control endpoints
 #[derive(Debug, Serialize)]
 pub struct AdminControlResponse {
+    /// Human-readable status message
     pub message: String,
+    /// Current processor state: "running", "paused", or "stopping"
     pub state: String,
 }
 
@@ -376,7 +483,7 @@ pub async fn admin_stop(
 ) -> impl IntoResponse {
     app_state.processor_state.store(2, std::sync::atomic::Ordering::Relaxed);
     ApiResponse::success(AdminControlResponse {
-        message: "Batch processor stopping (HTTP server will continue)".to_string(),
+        message: "Batch processor stopping (will shut down entire application)".to_string(),
         state: "stopping".to_string(),
     })
 }
@@ -398,11 +505,16 @@ pub async fn admin_status(
     })
 }
 
-// Custom serialization for byte arrays to use base64
+/// Custom serde module for base64 encoding of byte arrays
+/// 
+/// This module provides serialization and deserialization for `Vec<u8>` fields
+/// that should be represented as base64 strings in JSON. Used by query parameter
+/// structs to accept base64-encoded hashes from clients.
 pub mod proof_bytes_format {
     use super::*;
     use serde::{Deserializer, Serializer};
 
+    /// Serialize a byte vector as a base64 string
     pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -410,6 +522,7 @@ pub mod proof_bytes_format {
         serializer.serialize_str(&BASE64.encode(bytes))
     }
 
+    /// Deserialize a base64 string into a byte vector
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
     where
         D: Deserializer<'de>,

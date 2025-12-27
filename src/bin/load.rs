@@ -1,3 +1,14 @@
+//! Load generator for testing mrkl under realistic conditions
+//!
+//! Simulates a high-throughput application by continuously inserting entries
+//! into a test table that mrkl monitors. Uses direct database access.
+//!
+//! # Usage
+//!
+//! ```bash
+//! cargo run --bin load -- --entries 1000 --batch-size 100
+//! ```
+
 use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;

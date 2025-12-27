@@ -1,3 +1,8 @@
+//! Integration tests for the mrkl HTTP client
+//!
+//! Tests the Client API for interacting with the mrkl server, including
+//! proof requests, verification, and error handling.
+
 use anyhow::Result;
 use mrkl::service::Client;
 use sha2::{Digest, Sha256};

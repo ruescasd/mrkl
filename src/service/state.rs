@@ -9,12 +9,18 @@ use crate::service::metrics::Metrics;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessorState {
+    /// Normal operation - processor is actively processing batches
     Running = 0,
+    /// Paused state - processor sleeps but server continues running
     Paused = 1,
+    /// Stopping state - processor exits, causing the entire application to shut down
     Stopping = 2,
 }
 
 impl ProcessorState {
+    /// Converts a u8 value to ProcessorState
+    /// 
+    /// Used to read the atomic state value. Unknown values default to Running.
     pub fn from_u8(value: u8) -> Self {
         match value {
             1 => ProcessorState::Paused,
@@ -45,7 +51,7 @@ pub struct AppState {
 pub struct MerkleState {
     /// The history-tracking merkle tree storing leaf hashes and their indices
     pub tree: CtMerkleTree,
-    /// The ID of the last processed log entry incorporated into the tree
+    /// The ID of the last merkle_log entry incorporated into the tree
     pub last_processed_id: i64,
 }
 
@@ -63,15 +69,4 @@ impl MerkleState {
         self.tree.push(hash);
         self.last_processed_id = id;
     }
-
-    
-    // for the moment we must checkpoint after each addition,
-    // because in a rebuild scenario we do not know which roots have been published
-    // these checkpoints are currently part of update_with_entry, and
-    // cannot yet be called separately.
-    /*
-    /// Set a root checkpoint for the current tree state
-     pub fn root_checkpoint(&mut self) {
-        self.tree.root_checkpoint();
-    }*/
 }

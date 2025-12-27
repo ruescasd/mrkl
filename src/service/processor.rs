@@ -162,7 +162,8 @@ pub async fn run_batch_processor(app_state: AppState) {
         };
 
         let logs_result = load_enabled_logs(&conn).await;
-        drop(conn); // Release connection before processing
+        // Release connection before processing
+        drop(conn); 
 
         let Ok(log_names) = logs_result else {
             println!(
@@ -230,7 +231,6 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
     let copy_duration = copy_start.elapsed();
 
     let Ok(batch_stats) = batch_result else {
-        println!("************ error branch {:?}", batch_result.as_ref().err().unwrap());
         return Err(batch_result.err().unwrap());
     };
 
@@ -283,7 +283,8 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
 
         // Update metrics for this log
         let final_tree_size = merkle_state.tree.len() as u64;
-        drop(merkle_state); // Release lock before metrics update
+        // Release lock asap
+        drop(merkle_state); 
         
         let total_duration = total_start.elapsed();
         
@@ -504,7 +505,6 @@ async fn copy_source_rows(app_state: &AppState, log_name: &str, batch_size: i64)
 }
 
 /// Rebuilds all enabled logs from the database on startup
-/// This ensures in-memory trees match persistent state
 pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
     println!("🔄 Rebuilding all logs from database...");
 
@@ -517,7 +517,8 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
     
     for validation in &validations {
         if !validation.enabled {
-            continue; // Skip disabled logs
+            // Skip disabled logs
+            continue;
         }
 
         let invalid_sources: Vec<_> = validation.sources.iter()

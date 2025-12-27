@@ -8,22 +8,30 @@ use std::collections::HashMap;
 /// Error type for proof operations
 #[derive(Debug)]
 pub enum ProofError {
+    /// The requested leaf hash was not found in the tree
     LeafNotFound,
+    /// The requested root hash was not found in the tree's history
     RootNotFound,
-    LeafNotPresentAtRoot,
+    /// The leaf exists but wasn't present at the specified tree state
+    LeafNotPresentAtTree,
+    /// The old root must have a smaller tree size than the current root
     InvalidRootOrder,
+    /// Cannot generate consistency proof from a root to itself
     SameRoot,
-    UnexpectedRoot(Vec<u8>),
+    /// The tree's actual root doesn't match the expected root
+    RewindUnexpectedRoot(Vec<u8>),
 }
 
 /// Error type for tree rewinding operations
 #[derive(Debug)]
 pub enum RewindError {
+    /// The target root hash was not found in the tree's history
     RootNotFound,
+    /// The tree's actual root doesn't match the expected root after rewinding
     UnexpectedRoot(Vec<u8>),
 }
 
-// SHA-256 hash size in bytes
+/// SHA-256 hash size in bytes
 pub const LEAF_HASH_SIZE: u64 = 32; 
 
 /// A merkle tree implementation based on Certificate Transparency that maintains root history and provides proofs
@@ -169,7 +177,7 @@ impl CtMerkleTree {
         // Get historical tree state
         let historical_tree = self.rewind(root).map_err(|e| match e {
             RewindError::RootNotFound => ProofError::RootNotFound,
-            RewindError::UnexpectedRoot(r) => ProofError::UnexpectedRoot(r),
+            RewindError::UnexpectedRoot(r) => ProofError::RewindUnexpectedRoot(r),
         })?;
 
         self.prove_inclusion_for_tree(&historical_tree, leaf_hash)
@@ -228,7 +236,7 @@ impl CtMerkleTree {
         } else {
             &self.rewind(new_root).map_err(|e| match e {
                 RewindError::RootNotFound => ProofError::RootNotFound,
-                RewindError::UnexpectedRoot(r) => ProofError::UnexpectedRoot(r),
+                RewindError::UnexpectedRoot(r) => ProofError::RewindUnexpectedRoot(r),
             })?
         };
 
@@ -287,7 +295,7 @@ impl CtMerkleTree {
 
         // Check if leaf is actually in the historical state
         if *idx >= tree.len().try_into().unwrap() {
-            return Err(ProofError::LeafNotPresentAtRoot);
+            return Err(ProofError::LeafNotPresentAtTree);
         }
 
         Ok(tree.prove_inclusion(*idx))
@@ -540,7 +548,7 @@ mod tests {
         // For leaf2 at root1 (wasn't present yet)
         assert!(matches!(
             tree.prove_inclusion_at_root(&leaf2_hash, &root1),
-            Err(ProofError::LeafNotPresentAtRoot)
+            Err(ProofError::LeafNotPresentAtTree)
         ));
 
         // For leaf2 at root2 (just added)

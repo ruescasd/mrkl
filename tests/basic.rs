@@ -1,4 +1,11 @@
-// cargo test --test basic -- --include-ignored --nocapture
+//! Integration tests for mrkl core functionality
+//!
+//! Tests the complete workflow including database operations, merkle tree building,
+//! proof generation and verification. Uses `serial_test` to ensure tests run
+//! sequentially since they share database state.
+//!
+//! Run with: `cargo test --test basic -- --include-ignored --nocapture`
+
 use anyhow::Result;
 use base64::Engine;
 use serial_test::serial;

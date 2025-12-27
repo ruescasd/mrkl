@@ -1,3 +1,28 @@
+//! MRKL - PostgreSQL-integrated Merkle Tree Verification Service
+//!
+//! This crate provides an addon service to existing postgresql database that 
+//! maintains multiple independent Certificate Transparency-style merkle logs. It enables
+//! cryptographic verification of append-only logs through inclusion and consistency proofs.
+//!
+//! # Overview
+//!
+//! MRKL combines PostgreSQL's reliability with cryptographic merkle tree verification,
+//! allowing applications to prove that data entries:
+//! - **Exist in the log** (inclusion proofs)
+//! - **Were never removed or modified** (append-only consistency proofs)
+//!
+//! # Architecture
+//!
+//! - **Multiple Independent Logs**: Each log tracks different source tables
+//! - **Continuous Processing**: Background batch processor merges data from configured sources
+//! - **HTTP API**: RESTful endpoints for verification operations
+//! - **In-memory Proof Generation**: In-memory merkle trees for fast proof generation
+//!
+//! # Modules
+//!
+//! - [`service`]: HTTP server and batch processing logic
+//! - [`tree`]: Merkle tree implementation with proof generation
+
 use anyhow::Result;
 use ct_merkle::{ConsistencyProof as CtConsistencyProof, InclusionProof as CtInclusionProof};
 use ct_merkle::{HashableLeaf, RootHash};
@@ -5,8 +30,16 @@ use digest::Update;
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, digest::Output};
 
-// Export modules
+/// HTTP service layer for merkle log verification
+///
+/// Contains the web server, client library, batch processor, and all HTTP route handlers.
+/// This is the main interface for interacting with merkle logs over the network.
 pub mod service;
+
+/// Merkle tree data structures and proof generation
+///
+/// Provides the core merkle tree implementation with support for inclusion proofs,
+/// consistency proofs.
 pub mod tree;
 
 // Re-export service layer components
@@ -101,7 +134,12 @@ impl ConsistencyProof {
 }
 
 /// Represents a pre-computed hash value for the merkle tree.
-/// This type only stores the hash, reducing memory usage in the tree.
+/// 
+/// Although the intent of this structure it to store pre-computed hashes,
+/// the architectur of ct-merkle does not allow hashes to be pre-computed externally,
+/// this means that even if a pre-computed hash is provided, ct-merkle will re-hash 
+/// it internally. This also means that it is possible to insert arbitrary binary data 
+/// to the tree, not just hashes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeafHash {
     /// The pre-computed SHA-256 hash of some data

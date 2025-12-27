@@ -29,7 +29,7 @@ impl Client {
     pub async fn get_log_size(&self, log_name: &str) -> Result<usize> {
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/size", self.api_base_url, log_name))
+            .get(format!("{}/logs/{}/size", self.api_base_url, log_name))
             .send()
             .await?
             .json::<serde_json::Value>()

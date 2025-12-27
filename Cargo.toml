@@ -40,3 +40,31 @@ path = "src/bin/dashboard.rs"
 [[bin]]
 name = "load"
 path = "src/bin/load.rs"
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_code = "forbid"
+private_interfaces = "deny"
+private_bounds = "deny"
+unnameable_types = "deny"
+# https://github.com/taiki-e/cargo-llvm-cov?tab=readme-ov-file#exclude-code-from-coverage
+# unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
+
+[lints.clippy]
+missing_docs_in_private_items = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+# doc_markdown = "deny"
+# unwrap_used = "deny"
+# print_stdout = "deny"
+# print_stderr = "deny"
+# arithmetic_side_effects = "warn"
+# shadow_unrelated = "warn"
+# cognitive_complexity = "warn"
+# disallowed_macros = "deny"
+# groups, not a single lint
+# pedantic = "deny"
+# suspicious = "deny"
+# complexity = "deny"
+# style = "warn"
+# perf = "warn"

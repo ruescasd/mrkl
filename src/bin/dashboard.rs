@@ -1,3 +1,16 @@
+//! Real-time metrics dashboard for mrkl
+//!
+//! A terminal-based dashboard that displays live metrics from the mrkl server,
+//! including per-log processing statistics and global system metrics.
+//!
+//! # Usage
+//!
+//! ```bash
+//! cargo run --bin dashboard
+//! ```
+//!
+//! Press Ctrl+C to exit.
+
 use anyhow::Result;
 use crossterm::{
     cursor,
