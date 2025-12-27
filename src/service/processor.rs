@@ -51,9 +51,13 @@ pub struct BatchStats {
 /// Implements Ord for universal ordering: (timestamp, id, table_name)
 #[derive(Debug, Clone, Eq)]
 struct SourceRow {
+    /// Name of the source table this row came from
     source_table: String,
+    /// ID of the row in the source table
     source_id: i64,
+    /// SHA256 hash of the leaf data
     leaf_hash: Vec<u8>,
+    /// Optional timestamp for ordering (timestamped entries sort before non-timestamped)
     order_timestamp: Option<DateTime<Utc>>,
 }
 
@@ -169,13 +173,13 @@ pub async fn run_batch_processor(app_state: AppState) {
         // Release connection before processing
         drop(conn);
 
-        let Ok(log_names) = logs_result else {
-            println!(
-                "⚠️ Failed to load enabled logs: {}",
-                logs_result.err().unwrap()
-            );
-            tokio::time::sleep(interval).await;
-            continue;
+        let log_names = match logs_result {
+            Ok(names) => names,
+            Err(e) => {
+                println!("⚠️ Failed to load enabled logs: {}", e);
+                tokio::time::sleep(interval).await;
+                continue;
+            }
         };
 
         let now = std::time::Instant::now();
@@ -233,9 +237,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
 
     let copy_duration = copy_start.elapsed();
 
-    let Ok(batch_stats) = batch_result else {
-        return Err(batch_result.err().unwrap());
-    };
+    let batch_stats = batch_result?;
 
     if batch_stats.rows_copied > 0 {
         // Time the retrieval from merkle_log
@@ -255,12 +257,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
 
         let fetch_duration = fetch_start.elapsed();
 
-        let Ok(rows) = fetch_result else {
-            return Err(anyhow::anyhow!(
-                "Failed to fetch processed rows: {}",
-                fetch_result.err().unwrap()
-            ));
-        };
+        let rows = fetch_result?;
 
         let leaves_added = rows.len();
         // Start timing the tree construction
@@ -285,7 +282,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
         let tree_duration = tree_start.elapsed();
 
         // Update metrics for this log
-        let final_tree_size = merkle_state.tree.len() as u64;
+        let final_tree_size = merkle_state.tree.len();
         // Release lock asap
         drop(merkle_state);
 
@@ -308,7 +305,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
             });
     } else {
         // Update metrics even when no rows copied (caught up)
-        let tree_size = merkle_state_arc.read().tree.len() as u64;
+        let tree_size = merkle_state_arc.read().tree.len();
         let total_duration = total_start.elapsed();
 
         app_state
@@ -524,6 +521,11 @@ async fn copy_source_rows(
 }
 
 /// Rebuilds all enabled logs from the database on startup
+///
+/// # Errors
+///
+/// Returns an error if any database operations fail, including getting a connection,
+/// loading log configurations, validating sources, or rebuilding individual logs.
 pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
     println!("🔄 Rebuilding all logs from database...");
 
@@ -533,6 +535,7 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
     // Validate all source configurations and report issues
     println!("🔍 Validating source configurations...");
     let validations = crate::service::validate_all_logs(&conn).await?;
+    drop(conn);
 
     for validation in &validations {
         if !validation.enabled {
@@ -560,8 +563,6 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
         }
     }
     println!("✅ Validation complete\n");
-
-    drop(conn);
 
     if log_names.is_empty() {
         println!("✅ No logs to rebuild");

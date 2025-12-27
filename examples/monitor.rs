@@ -12,6 +12,7 @@
 //!
 //! Example:
 //!   cargo run --example monitor -- example_post_log
+#![allow(clippy::missing_docs_in_private_items)]
 
 use anyhow::Result;
 use base64::Engine;
@@ -20,7 +21,7 @@ use std::time::Duration;
 
 #[derive(Debug)]
 struct LogState {
-    size: usize,
+    size: u64,
     root: Vec<u8>,
 }
 

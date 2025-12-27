@@ -9,6 +9,7 @@
 //!
 //! Usage:
 //!   cargo run --example post
+#![allow(clippy::missing_docs_in_private_items)]
 
 use anyhow::Result;
 use base64::Engine;

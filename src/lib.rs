@@ -52,16 +52,20 @@ pub use service::{
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InclusionProof {
     /// The index of the leaf in the tree
-    pub index: usize,
+    pub index: u64,
     /// The root hash at the time the proof was generated
     pub root: Vec<u8>,
     /// The inclusion proof path as raw bytes
     pub proof_bytes: Vec<u8>,
     /// The total number of leaves in the tree at the time of proof generation
-    pub tree_size: usize,
+    pub tree_size: u64,
 }
 impl InclusionProof {
     /// Verifies this proof against the given leaf hash using ct-merkle's proof verification
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the root hash length is invalid.
     pub fn verify(&self, hash: &[u8]) -> Result<bool> {
         // Create the leaf hash from the provided hash
         let leaf_hash = LeafHash::new(hash.to_vec());
@@ -74,13 +78,13 @@ impl InclusionProof {
         digest.copy_from_slice(&self.root);
 
         // Create the root hash with the digest and actual tree size
-        let root_hash = RootHash::<Sha256>::new(digest, self.tree_size as u64);
+        let root_hash = RootHash::<Sha256>::new(digest, self.tree_size);
 
         // Create the inclusion proof from our stored bytes
         let proof = CtInclusionProof::<Sha256>::from_bytes(self.proof_bytes.clone());
 
         // Verify using root's verification method
-        match root_hash.verify_inclusion(&leaf_hash, self.index as u64, &proof) {
+        match root_hash.verify_inclusion(&leaf_hash, self.index, &proof) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
@@ -91,7 +95,7 @@ impl InclusionProof {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConsistencyProof {
     /// The number of leaves in the old (smaller) tree
-    pub old_tree_size: usize,
+    pub old_tree_size: u64,
     /// The root hash of the old tree
     pub old_root: Vec<u8>,
     /// The consistency proof path bytes
@@ -99,11 +103,17 @@ pub struct ConsistencyProof {
     /// The root hash of the new (larger) tree
     pub new_root: Vec<u8>,
     /// The total number of leaves in the new tree
-    pub new_tree_size: usize,
+    pub new_tree_size: u64,
 }
 
 impl ConsistencyProof {
     /// Verifies this proof using ct-merkle's consistency proof verification
+    ///
+    /// # Errors
+    /// 
+    /// - MalformedProof: if the old or new root hash lengths are invalid, or if the proof bytes are malformed
+    /// - ConsistencyVerifError: if the proof verification fails
+    ///
     pub fn verify(&self) -> Result<bool, ct_merkle::ConsistencyVerifError> {
         // Create digest from old root bytes
         let mut old_digest = Output::<Sha256>::default();
@@ -113,7 +123,7 @@ impl ConsistencyProof {
         old_digest.copy_from_slice(&self.old_root);
 
         // Create old root hash with digest and size
-        let old_root = RootHash::<Sha256>::new(old_digest, self.old_tree_size as u64);
+        let old_root = RootHash::<Sha256>::new(old_digest, self.old_tree_size);
 
         // Create digest from new root bytes
         let mut new_digest = Output::<Sha256>::default();
@@ -123,7 +133,7 @@ impl ConsistencyProof {
         new_digest.copy_from_slice(&self.new_root);
 
         // Create new root hash with digest and size
-        let new_root = RootHash::<Sha256>::new(new_digest, self.new_tree_size as u64);
+        let new_root = RootHash::<Sha256>::new(new_digest, self.new_tree_size);
 
         // Create consistency proof from stored bytes
         let proof = CtConsistencyProof::<Sha256>::try_from_bytes(self.proof_bytes.clone())?;

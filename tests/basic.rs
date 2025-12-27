@@ -49,7 +49,7 @@ async fn test_inclusion_proofs() -> Result<()> {
     }
 
     // Wait until all entries are processed
-    let expected_size = initial_size + entries.len();
+    let expected_size = initial_size + entries.len() as u64;
     println!("⏳ Waiting for log to reach size {}...", expected_size);
     match client
         .wait_until_log_size("test_log_single_source", expected_size)
@@ -334,7 +334,7 @@ async fn test_burst_operations() -> Result<()> {
     }
 
     // Wait until all entries are processed
-    let expected_size = initial_size + entries.len();
+    let expected_size = initial_size + entries.len() as u64;
     println!("⏳ Waiting for log to reach size {}...", expected_size);
     client
         .wait_until_log_size("test_log_single_source", expected_size)
@@ -426,7 +426,7 @@ async fn test_large_batch_performance() -> Result<()> {
     }
 
     // Wait for final processing and get root
-    let expected_size = initial_size + num_entries;
+    let expected_size = initial_size + num_entries as u64;
     println!("\n⏳ Waiting for log to reach size {}...", expected_size);
     client
         .wait_until_log_size("test_log_single_source", expected_size)
@@ -671,7 +671,7 @@ async fn test_universal_ordering() -> Result<()> {
     println!("  ✓ Non-timestamped entries maintain id order within same table");
 
     // Constraint 4: Verify they are consecutive (no gaps from initial_size)
-    let expected_indices: Vec<usize> = (initial_size..initial_size + 5).collect();
+    let expected_indices: Vec<u64> = (initial_size..initial_size + 5).collect();
     let actual_indices = vec![
         proof1.index,
         proof2.index,
@@ -706,7 +706,7 @@ async fn test_no_timestamp_ordering() -> Result<()> {
     println!("\n🧪 Testing ordering with ONLY non-timestamped sources (no timestamps at all)");
 
     // Get initial log size
-    let initial_size = client.client.get_log_size("test_log_no_timestamp").await?;
+    let initial_size = client.client.get_log_size("test_log_no_timestamp").await? as u64;
     println!("📊 Initial log size: {}", initial_size);
 
     // Insert entries with specific ids to test ordering
@@ -803,12 +803,12 @@ async fn test_no_timestamp_ordering() -> Result<()> {
 
     println!("  Expected order by (id, table_name):");
     for (i, (id, table, _)) in entries.iter().enumerate() {
-        println!("    Position {}: {}:{}", initial_size + i, table, id);
+        println!("    Position {}: {}:{}", initial_size + i as u64, table, id);
     }
 
     // Verify indices match expected order
     for (i, (id, table, actual_index)) in entries.iter().enumerate() {
-        let expected_index = initial_size + i;
+        let expected_index = initial_size + i as u64;
         assert_eq!(
             *actual_index, expected_index,
             "Entry {}:{} should be at index {} but is at {}",
@@ -822,7 +822,7 @@ async fn test_no_timestamp_ordering() -> Result<()> {
     let mut sorted_indices = indices.clone();
     sorted_indices.sort();
 
-    let expected_indices: Vec<usize> = (initial_size..initial_size + 4).collect();
+    let expected_indices: Vec<u64> = (initial_size..initial_size + 4).collect();
     assert_eq!(
         sorted_indices, expected_indices,
         "Indices should be consecutive starting from {}",

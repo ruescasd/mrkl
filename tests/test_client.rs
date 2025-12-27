@@ -19,6 +19,10 @@ pub struct TestClient {
 
 impl TestClient {
     /// Creates a new test client with both HTTP and database access
+    ///
+    /// # Panics
+    /// 
+    /// Panics if DATABASE_URL is not set in the environment.
     pub async fn new(api_base_url: &str) -> Result<Self> {
         // Create production HTTP client
         let client = Client::new(api_base_url)?;
@@ -223,7 +227,7 @@ impl TestClient {
     /// Waits until the log reaches the expected size by polling the size endpoint
     /// This is much more efficient than fixed-duration sleeps
     /// STRICT: Returns error if size exceeds expected (indicates entries from elsewhere)
-    pub async fn wait_until_log_size(&self, log_name: &str, expected_size: usize) -> Result<()> {
+    pub async fn wait_until_log_size(&self, log_name: &str, expected_size: u64) -> Result<()> {
         let start_time = std::time::Instant::now();
         let timeout = Duration::from_secs(30); // Maximum wait time
         let poll_interval = Duration::from_millis(100); // Check every 100ms

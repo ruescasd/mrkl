@@ -59,10 +59,15 @@ pub fn create_server(app_state: AppState) -> Router {
 }
 
 /// Initialize the application state with database connection pool and empty merkle states map
+///
+/// # Errors
+///
+/// Returns an error if the `DATABASE_URL` environment variable is not set or if the
+/// database connection pool cannot be created.
 pub async fn initialize_app_state() -> Result<AppState> {
     println!("Connecting to database...");
 
-    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let db_url = std::env::var("DATABASE_URL")?;
 
     // Parse connection string into deadpool config
     let mut cfg = Config::new();
@@ -87,6 +92,11 @@ pub async fn initialize_app_state() -> Result<AppState> {
 }
 
 /// Run the complete HTTP server with batch processing
+///
+/// # Errors
+///
+/// Returns an error if rebuilding logs from the database fails or if the TCP listener
+/// cannot bind to the specified address.
 pub async fn run_server(app_state: AppState) -> Result<()> {
     // Clone the state for the processing task
     let process_state = app_state.clone();

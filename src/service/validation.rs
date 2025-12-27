@@ -145,6 +145,10 @@ impl LogValidation {
 }
 
 /// Validates all logs and their source configurations
+///
+/// # Errors
+///
+/// Returns an error if any database queries fail while loading logs or validating sources.
 pub async fn validate_all_logs(conn: &PooledConnection) -> Result<Vec<LogValidation>> {
     // Get all logs
     let log_rows = conn

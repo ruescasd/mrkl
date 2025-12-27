@@ -116,7 +116,7 @@ pub async fn get_log_size(
 
     ApiResponse::success(SizeResponse {
         log_name,
-        size: size as u64,
+        size,
     })
 }
 
@@ -137,6 +137,10 @@ pub async fn get_log_size(
 /// - `LogNotFound`: The specified log doesn't exist
 /// - `ProofGenerationFailed`: Failed to generate the proof (leaf not found)
 /// - `ProofVerificationFailed`: Generated proof failed verification (internal error)
+///
+/// # Panics
+///
+/// Infallible: Index must exist after proof generation succeeds
 pub async fn get_inclusion_proof(
     Path(log_name): Path<String>,
     query_result: Result<Query<InclusionQuery>, axum::extract::rejection::QueryRejection>,
@@ -180,9 +184,9 @@ pub async fn get_inclusion_proof(
 
     // Verify the proof as a sanity check
     match tree.verify_inclusion(&query.hash, &proof) {
-        Ok(true) => {
+        Ok(()) => {
             // Get the index (safe because prove_inclusion succeeded)
-            let index = tree.get_index(&query.hash).unwrap();
+            let index = tree.get_index(&query.hash).expect("Index must exist after proof generation succeeds");
 
             // Create InclusionProof with all necessary data
             let inclusion_proof = InclusionProof {
@@ -196,10 +200,6 @@ pub async fn get_inclusion_proof(
                 log_name,
                 proof: inclusion_proof,
             })
-        }
-        Ok(false) => {
-            ApiError::ProofVerificationFailed("Proof verification returned false".to_string())
-                .to_response()
         }
         Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification error: {:?}", e))
             .to_response(),
@@ -224,6 +224,10 @@ pub async fn get_inclusion_proof(
 /// - `LogNotFound`: The specified log doesn't exist
 /// - `ProofGenerationFailed`: Failed to generate the proof (old_root not found in history)
 /// - `ProofVerificationFailed`: Generated proof failed verification (internal error)
+///
+/// # Panics
+///
+/// Infallible: Old tree size must exist after proof generation succeeds
 pub async fn get_consistency_proof(
     Path(log_name): Path<String>,
     query_result: Result<Query<ConsistencyQuery>, axum::extract::rejection::QueryRejection>,
@@ -267,8 +271,8 @@ pub async fn get_consistency_proof(
 
     // Verify the proof
     match tree.verify_consistency(&query.old_root, &proof) {
-        Ok(true) => {
-            let old_size = tree.get_size_for_root(&query.old_root).unwrap(); // Safe because prove_consistency succeeded
+        Ok(()) => {
+            let old_size = tree.get_size_for_root(&query.old_root).expect("Old tree size must exist after proof generation succeeds");
 
             // Return the verified proof
             let consistency_proof = ConsistencyProof {
@@ -284,11 +288,7 @@ pub async fn get_consistency_proof(
                 proof: consistency_proof,
             })
         }
-        Ok(false) => {
-            ApiError::ProofVerificationFailed("Proof verification returned false".to_string())
-                .to_response()
-        }
-        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification error: {:?}", e))
+        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification failed: {:?}", e))
             .to_response(),
     }
 }
@@ -415,7 +415,7 @@ pub async fn has_log(
 /// Get current metrics for all logs and global statistics
 pub async fn metrics(
     State(app_state): State<AppState>,
-) -> Result<impl IntoResponse, ApiResponse<()>> {
+) -> impl IntoResponse {
     let metrics = app_state.metrics.get_snapshot();
 
     let mut logs = std::collections::HashMap::new();
@@ -445,7 +445,7 @@ pub async fn metrics(
         last_cycle_fraction: metrics.1.last_cycle_fraction,
     };
 
-    Ok(ApiResponse::success(MetricsResponse { logs, global }))
+    ApiResponse::success(MetricsResponse { logs, global })
 }
 // Admin endpoints for processor control
 // These endpoints allow graceful pause/resume/stop of the batch processor
@@ -519,6 +519,10 @@ pub mod proof_bytes_format {
     use serde::{Deserializer, Serializer};
 
     /// Serialize a byte vector as a base64 string
+    ///
+    /// # Errors
+    ///
+    /// Returns a serialization error if the serializer fails to encode the base64 string.
     pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -527,6 +531,10 @@ pub mod proof_bytes_format {
     }
 
     /// Deserialize a base64 string into a byte vector
+    ///
+    /// # Errors
+    ///
+    /// Returns a deserialization error if the input is not a valid base64 string.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
     where
         D: Deserializer<'de>,

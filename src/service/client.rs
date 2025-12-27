@@ -7,12 +7,18 @@ use std::time::Duration;
 
 /// Production HTTP client for interacting with the merkle tree service
 pub struct Client {
+    /// HTTP client for making requests to the API
     http_client: HttpClient,
+    /// Base URL of the merkle tree service API
     api_base_url: String,
 }
 
 impl Client {
     /// Creates a new HTTP client for the merkle tree service
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTPClient build fails.
     pub fn new(api_base_url: &str) -> Result<Self> {
         // Set up HTTP client with reasonable timeouts
         let http_client = HttpClient::builder()
@@ -26,7 +32,12 @@ impl Client {
     }
 
     /// Gets the current size (number of entries) of the log
-    pub async fn get_log_size(&self, log_name: &str) -> Result<usize> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
+    /// or if the server returns an error status.
+    pub async fn get_log_size(&self, log_name: &str) -> Result<u64> {
         let response = self
             .http_client
             .get(format!("{}/logs/{}/size", self.api_base_url, log_name))
@@ -47,10 +58,15 @@ impl Client {
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("Invalid size response"))?;
 
-        Ok(size as usize)
+        Ok(size)
     }
 
     /// Gets the current merkle root
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
+    /// if the base64 decoding of the root bytes fails, or if the server returns an error status.
     pub async fn get_root(&self, log_name: &str) -> Result<Vec<u8>> {
         let response = self
             .http_client
@@ -80,6 +96,11 @@ impl Client {
     }
 
     /// Gets an inclusion proof for a given hash or piece of data
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
+    /// or if the server returns an error status.
     pub async fn get_inclusion_proof(&self, log_name: &str, data: &str) -> Result<InclusionProof> {
         // Compute the hash from the data
         let mut hasher = Sha256::new();
@@ -115,6 +136,11 @@ impl Client {
     }
 
     /// Gets a consistency proof proving that the current tree state is consistent with an older root hash
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
+    /// or if the server returns an error status.
     pub async fn get_consistency_proof(
         &self,
         log_name: &str,
@@ -150,6 +176,11 @@ impl Client {
 
     /// Verifies that the current tree state is consistent with a previously observed state.
     /// Returns true if the current tree is a descendant of old_root (i.e., old tree is a prefix).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if fetching the consistency proof or current root fails,
+    /// or if proof verification fails.
     pub async fn verify_tree_consistency(&self, log_name: &str, old_root: Vec<u8>) -> Result<bool> {
         // Get consistency proof between the old root and current state
         let proof = self.get_consistency_proof(log_name, old_root).await?;
@@ -167,6 +198,11 @@ impl Client {
     }
 
     /// Checks if a leaf (identified by its hash) exists in the log
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
+    /// or if the server returns an error status.
     pub async fn has_leaf(&self, log_name: &str, data: &str) -> Result<bool> {
         // Compute the hash from the data
         let mut hasher = Sha256::new();
@@ -204,6 +240,11 @@ impl Client {
     }
 
     /// Checks if a historical root exists in the log
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
+    /// or if the server returns an error status.
     pub async fn has_root(&self, log_name: &str, root: Vec<u8>) -> Result<bool> {
         let query = crate::service::HasRootQuery { root };
 
@@ -234,6 +275,11 @@ impl Client {
     }
 
     /// Checks if a log exists on the server
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
+    /// or if the server returns an error status.
     pub async fn has_log(&self, log_name: &str) -> Result<bool> {
         let response = self
             .http_client

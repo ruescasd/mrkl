@@ -119,7 +119,7 @@ impl RootResponse {
         Self {
             log_name,
             merkle_root: base64::engine::general_purpose::STANDARD.encode(state.tree.root()),
-            tree_size: state.tree.len() as u64,
+            tree_size: state.tree.len(),
         }
     }
 }
