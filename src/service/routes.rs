@@ -220,9 +220,9 @@ pub async fn get_inclusion_proof(
 ///
 /// # Errors
 ///
-/// - `InvalidRequest`: Query parameter parsing failed or old_root not base64
+/// - `InvalidRequest`: Query parameter parsing failed or `old_root` not base64
 /// - `LogNotFound`: The specified log doesn't exist
-/// - `ProofGenerationFailed`: Failed to generate the proof (old_root not found in history)
+/// - `ProofGenerationFailed`: Failed to generate the proof (`old_root` not found in history)
 /// - `ProofVerificationFailed`: Generated proof failed verification (internal error)
 ///
 /// # Panics

@@ -43,9 +43,9 @@ struct LogMetrics {
     last_copy_ms: u64,
     /// Duration of querying sources in the last batch in milliseconds.
     last_query_sources_ms: u64,
-    /// Duration of inserting into merkle_log in the last batch in milliseconds.
+    /// Duration of inserting into `merkle_log` in the last batch in milliseconds.
     last_insert_merkle_log_ms: u64,
-    /// Duration of fetching from merkle_log in the last batch in milliseconds.
+    /// Duration of fetching from `merkle_log` in the last batch in milliseconds.
     last_fetch_merkle_log_ms: u64,
     /// Duration of updating the tree in the last batch in milliseconds.
     last_tree_update_ms: u64,

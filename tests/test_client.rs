@@ -27,7 +27,7 @@ impl TestClient {
     ///
     /// # Panics
     /// 
-    /// Panics if DATABASE_URL is not set in the environment.
+    /// Panics if `DATABASE_URL` is not set in the environment.
     pub async fn new(api_base_url: &str) -> Result<Self> {
         // Create production HTTP client
         let client = Client::new(api_base_url)?;
@@ -156,7 +156,7 @@ impl TestClient {
 
     // ===== Database Insertion Utilities =====
 
-    /// Adds a new entry to the source_log table
+    /// Adds a new entry to the `source_log` table
     ///
     /// # Errors
     ///
@@ -203,7 +203,7 @@ impl TestClient {
 
     // ===== Test Assertion Utilities =====
 
-    /// Gets all sources from merkle_log for a given log
+    /// Gets all sources from `merkle_log` for a given log
     ///
     /// # Errors
     ///

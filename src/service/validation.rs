@@ -25,9 +25,9 @@ pub struct ColumnValidation {
     pub column_name: String,
     /// Whether the column exists in the table
     pub exists: bool,
-    /// The actual PostgreSQL data type of the column (if it exists)
+    /// The actual `PostgreSQL` data type of the column (if it exists)
     pub data_type: Option<String>,
-    /// The expected PostgreSQL data type for this column
+    /// The expected `PostgreSQL` data type for this column
     pub expected_type: String,
     /// Whether the actual type matches the expected type
     pub type_matches: bool,

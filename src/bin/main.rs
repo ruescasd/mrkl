@@ -1,6 +1,6 @@
 //! Main server binary for mrkl
 //!
-//! Runs the HTTP API server and batch processor that monitors PostgreSQL tables
+//! Runs the HTTP API server and batch processor that monitors `PostgreSQL` tables
 //! and builds merkle trees for Certificate Transparency-style verification.
 //!
 //! # Usage

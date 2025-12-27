@@ -18,7 +18,7 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// Returns an error if the HTTPClient build fails.
+    /// Returns an error if the `HTTPClient` build fails.
     pub fn new(api_base_url: &str) -> Result<Self> {
         // Set up HTTP client with reasonable timeouts
         let http_client = HttpClient::builder()
@@ -175,7 +175,7 @@ impl Client {
     }
 
     /// Verifies that the current tree state is consistent with a previously observed state.
-    /// Returns true if the current tree is a descendant of old_root (i.e., old tree is a prefix).
+    /// Returns true if the current tree is a descendant of `old_root` (i.e., old tree is a prefix).
     ///
     /// # Errors
     ///

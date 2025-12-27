@@ -8,10 +8,10 @@
 //! logs are append-only and detect any attempts to rewrite history.
 //!
 //! Usage:
-//!   cargo run --example monitor -- <log_name>
+//!   cargo run --example monitor -- `<log_name>`
 //!
 //! Example:
-//!   cargo run --example monitor -- example_post_log
+//!   cargo run --example monitor -- `example_post_log`
 
 use anyhow::Result;
 use base64::Engine;

@@ -4,10 +4,9 @@
 //! maintains multiple independent Certificate Transparency-style merkle logs. It enables
 //! cryptographic verification of append-only logs through inclusion and consistency proofs.
 //!
-//! # Overview
+//! # Proofs
 //!
-//! MRKL combines PostgreSQL's reliability with cryptographic merkle tree verification,
-//! allowing applications to prove that data entries:
+//! The HTTP endpoints provide cryptographic proofs that data entries:
 //! - **Exist in the log** (inclusion proofs)
 //! - **Were never removed or modified** (append-only consistency proofs)
 //!
@@ -15,13 +14,13 @@
 //!
 //! - **Multiple Independent Logs**: Each log tracks different source tables
 //! - **Continuous Processing**: Background batch processor merges data from configured sources
-//! - **HTTP API**: RESTful endpoints for verification operations
+//! - **HTTP API**: HTTP endpoints to interact with the logs and request proofs
 //! - **In-memory Proof Generation**: In-memory merkle trees for fast proof generation
 //!
 //! # Modules
 //!
 //! - [`service`]: HTTP server and batch processing logic
-//! - [`tree`]: Merkle tree implementation with proof generation
+//! - [`tree`]: Merkle tree implementation with proof generation, based on the `ct-merkle` crate
 
 use anyhow::Result;
 use ct_merkle::{ConsistencyProof as CtConsistencyProof, InclusionProof as CtInclusionProof};
@@ -111,8 +110,8 @@ impl ConsistencyProof {
     ///
     /// # Errors
     /// 
-    /// - MalformedProof: if the old or new root hash lengths are invalid, or if the proof bytes are malformed
-    /// - ConsistencyVerifError: if the proof verification fails
+    /// - `MalformedProof`: if the old or new root hash lengths are invalid, or if the proof bytes are malformed
+    /// - `ConsistencyVerifError`: if the proof verification fails
     ///
     pub fn verify(&self) -> Result<bool, ct_merkle::ConsistencyVerifError> {
         // Create digest from old root bytes
@@ -157,7 +156,7 @@ pub struct LeafHash {
 }
 
 impl LeafHash {
-    /// Creates a new LeafHash from a given hash value
+    /// Creates a new `LeafHash` from a given hash value
     pub fn new(hash: Vec<u8>) -> Self {
         Self { hash }
     }

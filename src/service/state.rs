@@ -18,7 +18,7 @@ pub enum ProcessorState {
 }
 
 impl ProcessorState {
-    /// Converts a u8 value to ProcessorState
+    /// Converts a u8 value to `ProcessorState`
     ///
     /// Used to read the atomic state value. Unknown values default to Running.
     pub fn from_u8(value: u8) -> Self {
@@ -34,7 +34,7 @@ impl ProcessorState {
 #[derive(Clone)]
 pub struct AppState {
     /// Map of log name to merkle state (tree + last processed ID)
-    /// DashMap allows concurrent access without a single global lock
+    /// `DashMap` allows concurrent access without a single global lock
     pub merkle_states: Arc<DashMap<String, Arc<parking_lot::RwLock<MerkleState>>>>,
     /// Database connection pool for operations that need it
     pub db_pool: deadpool_postgres::Pool,
@@ -47,11 +47,11 @@ pub struct AppState {
 
 /// A combined state holding the merkle tree and its corresponding last processed ID.
 /// This ensures that readers always see a consistent view of both values.
-/// This is a service-layer wrapper around the core CtMerkleTree to coordinate with HTTP endpoints.
+/// This is a service-layer wrapper around the core `CtMerkleTree` to coordinate with HTTP endpoints.
 pub struct MerkleState {
     /// The history-tracking merkle tree storing leaf hashes and their indices
     pub tree: CtMerkleTree,
-    /// The ID of the last merkle_log entry incorporated into the tree
+    /// The ID of the last `merkle_log` entry incorporated into the tree
     pub last_processed_id: i64,
 }
 
@@ -64,7 +64,7 @@ impl MerkleState {
         }
     }
 
-    /// Updates both the tree and last_processed_id atomically
+    /// Updates both the tree and `last_processed_id` atomically
     pub fn update_with_entry(&mut self, hash: LeafHash, id: i64) {
         self.tree.push(hash);
         self.last_processed_id = id;

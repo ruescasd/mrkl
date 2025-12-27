@@ -10,17 +10,17 @@ use crate::service::state::AppState;
 /// Statistics from a batch processing operation
 #[derive(Debug, Clone)]
 pub struct BatchStats {
-    /// Number of rows copied from source tables to merkle_log
+    /// Number of rows copied from source tables to `merkle_log`
     pub rows_copied: i64,
     /// Time spent querying source tables (ms)
     pub query_sources_ms: u64,
-    /// Time spent inserting into merkle_log (ms)
+    /// Time spent inserting into `merkle_log` (ms)
     pub insert_merkle_log_ms: u64,
 }
 
-/// CRITICAL ARCHITECTURAL NOTE: merkle_log is GROUND TRUTH
+/// CRITICAL ARCHITECTURAL NOTE: `merkle_log` is GROUND TRUTH
 ///
-/// The ordering committed to merkle_log cannot be reconstructed deterministically from source tables alone.
+/// The ordering committed to `merkle_log` cannot be reconstructed deterministically from source tables alone.
 /// This is because:
 ///
 /// 1. **Batch boundaries matter**: Entries are sorted within each batch, not globally. The same entry might
@@ -39,16 +39,16 @@ pub struct BatchStats {
 ///    but they weren't available yet.
 ///
 /// Therefore:
-/// - Startup rebuild from merkle_log IS deterministic (correct behavior)
+/// - Startup rebuild from `merkle_log` IS deterministic (correct behavior)
 /// - Rebuild from source tables is NOT deterministic (would produce different merkle roots)
-/// - merkle_log must be backed up and preserved for disaster recovery
+/// - `merkle_log` must be backed up and preserved for disaster recovery
 /// - This is correct behavior for append-only transparency logs
 ///
 /// UPDATE: it would be possible to make rebuilds deterministic by storing batch boundaries,
 /// this would also allow the storing of only published roots instead of checkpointing after each entry.
 ///
-/// Represents a row from a source table ready to be inserted into merkle_log
-/// Implements Ord for universal ordering: (timestamp, id, table_name)
+/// Represents a row from a source table ready to be inserted into `merkle_log`
+/// Implements Ord for universal ordering: (timestamp, id, `table_name`)
 #[derive(Debug, Clone, Eq)]
 struct SourceRow {
     /// Name of the source table this row came from
@@ -131,7 +131,7 @@ impl SourceConfig {
     }
 }
 
-/// Runs the batch processing loop that moves entries from source tables to merkle_log
+/// Runs the batch processing loop that moves entries from source tables to `merkle_log`
 /// and updates the merkle tree state for each log
 pub async fn run_batch_processor(app_state: AppState) {
     let batch_size: i64 = 10000;
@@ -207,7 +207,7 @@ pub async fn run_batch_processor(app_state: AppState) {
     println!("✅ Batch processor stopped");
 }
 
-/// Process a single log: copy rows from source tables to merkle_log and update tree
+/// Process a single log: copy rows from source tables to `merkle_log` and update tree
 async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> Result<()> {
     // Time the entire processing cycle
     let total_start = std::time::Instant::now();
@@ -328,7 +328,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
     Ok(())
 }
 
-/// Process a batch of rows from configured source tables into merkle_log for a specific log
+/// Process a batch of rows from configured source tables into `merkle_log` for a specific log
 /// Returns statistics about the batch processing operation
 async fn copy_source_rows(
     app_state: &AppState,
@@ -625,7 +625,7 @@ async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Load enabled log names from verification_logs table
+/// Load enabled log names from `verification_logs` table
 async fn load_enabled_logs(conn: &PooledConnection) -> Result<Vec<String>> {
     let rows = conn
         .query(
@@ -643,7 +643,7 @@ async fn load_enabled_logs(conn: &PooledConnection) -> Result<Vec<String>> {
     Ok(log_names)
 }
 
-/// Load enabled source configurations from verification_sources table for a specific log
+/// Load enabled source configurations from `verification_sources` table for a specific log
 async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<Vec<SourceConfig>> {
     let rows = conn
         .query(

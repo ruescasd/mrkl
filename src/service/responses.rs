@@ -11,7 +11,7 @@ use crate::{ConsistencyProof, InclusionProof};
 
 /// Unified API response wrapper
 ///
-/// All endpoints return either Success(data) or Error(error_info)
+/// All endpoints return either Success(data) or `Error(error_info)`
 /// This ensures consistent JSON structure across the API
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -52,7 +52,7 @@ impl<T: Serialize> ApiResponse<T> {
     }
 }
 
-/// Convert ApiResponse to Axum response with appropriate status code
+/// Convert `ApiResponse` to Axum response with appropriate status code
 impl<T: Serialize> IntoResponse for ApiResponse<T> {
     fn into_response(self) -> Response {
         let status = match &self {
@@ -80,7 +80,7 @@ pub enum ApiError {
 }
 
 impl ApiError {
-    /// Convert error to ApiResponse with appropriate error message
+    /// Convert error to `ApiResponse` with appropriate error message
     pub fn to_response<T: Serialize>(self) -> ApiResponse<T> {
         match self {
             ApiError::LogNotFound(log_name) => ApiResponse::error_with_type(
@@ -102,7 +102,7 @@ impl ApiError {
     }
 }
 
-/// Response for GET /logs/{log_name}/root
+/// Response for GET `/logs/{log_name}/root`
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RootResponse {
     /// Name of the log
@@ -114,7 +114,7 @@ pub struct RootResponse {
 }
 
 impl RootResponse {
-    /// Creates a RootResponse from a MerkleState
+    /// Creates a `RootResponse` from a `MerkleState`
     pub fn from_merkle_state(log_name: String, state: &crate::service::state::MerkleState) -> Self {
         Self {
             log_name,
@@ -124,7 +124,7 @@ impl RootResponse {
     }
 }
 
-/// Response for GET /logs/{log_name}/size
+/// Response for GET `/logs/{log_name}/size`
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SizeResponse {
     /// Name of the log
@@ -133,7 +133,7 @@ pub struct SizeResponse {
     pub size: u64,
 }
 
-/// Response for GET /logs/{log_name}/proof (inclusion proof)
+/// Response for GET `/logs/{log_name}/proof` (inclusion proof)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InclusionProofResponse {
     /// Name of the log
@@ -142,7 +142,7 @@ pub struct InclusionProofResponse {
     pub proof: InclusionProof,
 }
 
-/// Response for GET /logs/{log_name}/consistency (consistency proof)
+/// Response for GET `/logs/{log_name}/consistency` (consistency proof)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConsistencyProofResponse {
     /// Name of the log
@@ -151,7 +151,7 @@ pub struct ConsistencyProofResponse {
     pub proof: ConsistencyProof,
 }
 
-/// Response for GET /logs/{log_name}/has_leaf
+/// Response for GET `/logs/{log_name}/has_leaf`
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HasLeafResponse {
     /// Name of the log
@@ -160,7 +160,7 @@ pub struct HasLeafResponse {
     pub exists: bool,
 }
 
-/// Response for GET /logs/{log_name}/has_root
+/// Response for GET `/logs/{log_name}/has_root`
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HasRootResponse {
     /// Name of the log
@@ -169,7 +169,7 @@ pub struct HasRootResponse {
     pub exists: bool,
 }
 
-/// Response for GET /logs/{log_name}/exists
+/// Response for GET `/logs/{log_name}/exists`
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HasLogResponse {
     /// Name of the log
@@ -191,9 +191,9 @@ pub struct LogMetricsResponse {
     pub last_copy_ms: u64,
     /// Time to query sources (ms)
     pub last_query_sources_ms: u64,
-    /// Time to insert into merkle_log (ms)
+    /// Time to insert into `merkle_log` (ms)
     pub last_insert_merkle_log_ms: u64,
-    /// Time to fetch from merkle_log (ms)
+    /// Time to fetch from `merkle_log` (ms)
     pub last_fetch_merkle_log_ms: u64,
     /// Time to update merkle tree (ms)
     pub last_tree_update_ms: u64,

@@ -1,7 +1,7 @@
 //! Database setup utility for mrkl
 //!
-//! Creates the necessary PostgreSQL tables and functions for mrkl operation.
-//! The schema includes verification_logs, verification_sources, and merkle_log tables.
+//! Creates the necessary `PostgreSQL` tables and functions for mrkl operation.
+//! The schema includes `verification_logs`, `verification_sources`, and `merkle_log` tables.
 //!
 //! # Usage
 //!

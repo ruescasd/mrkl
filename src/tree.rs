@@ -115,7 +115,7 @@ impl CtMerkleTree {
     ///
     /// # Errors
     ///
-    /// - ProofError: if proof generation fails
+    /// - `ProofError`: if proof generation fails
     pub fn prove_inclusion(&self, hash: &[u8]) -> Result<InclusionProof<Sha256>, ProofError> {
         self.prove_inclusion_at_root(hash, &self.root())
     }
@@ -124,7 +124,7 @@ impl CtMerkleTree {
     ///
     /// # Errors
     ///
-    /// - ProofError: if proof generation fails
+    /// - `ProofError`: if proof generation fails
     pub fn prove_consistency(
         &self,
         old_root: &[u8],
@@ -136,7 +136,7 @@ impl CtMerkleTree {
     ///
     /// # Errors
     ///
-    /// - VerificationError: if the proof verification fails
+    /// - `VerificationError`: if the proof verification fails
     pub fn verify_inclusion(
         &self,
         leaf_hash: &[u8],
@@ -149,7 +149,7 @@ impl CtMerkleTree {
     ///
     /// # Errors
     ///
-    /// - VerificationError:  if the proof verification fails
+    /// - `VerificationError`:  if the proof verification fails
     pub fn verify_consistency(
         &self,
         old_root: &[u8],
@@ -172,8 +172,8 @@ impl CtMerkleTree {
     ///
     /// # Errors
     ///
-    /// - RewindError::RootNotFound: if the root hash does not exist in the tree's history,
-    /// - RewindError::UnexpectedRoot: if the rewound tree's root does not match the expected root.
+    /// - `RewindError::RootNotFound`: if the root hash does not exist in the tree's history,
+    /// - `RewindError::UnexpectedRoot`: if the rewound tree's root does not match the expected root.
     pub(crate) fn rewind(
         &self,
         historical_root: &[u8],
@@ -207,9 +207,9 @@ impl CtMerkleTree {
     ///
     /// # Errors
     ///
-    /// - ProofError::LeafNotFound: if the leaf hash does not exist in the tree,
-    /// - ProofError::LeafNotPresentAtTree: if the leaf was added after the specified root.
-    /// - ProofError::RewindError: if rewinding to the specified root fails.
+    /// - `ProofError::LeafNotFound`: if the leaf hash does not exist in the tree,
+    /// - `ProofError::LeafNotPresentAtTree`: if the leaf was added after the specified root.
+    /// - `ProofError::RewindError`: if rewinding to the specified root fails.
     pub fn prove_inclusion_at_root(
         &self,
         leaf_hash: &[u8],
@@ -229,10 +229,10 @@ impl CtMerkleTree {
     ///
     /// # Errors
     /// 
-    /// - VerificationError::LeafNotFound: if the leaf hash does not exist in the tree,
-    /// - VerificationError::LeafNotPresentAtTree: if the leaf was added after the specified root.
-    /// - VerificationError::RewindError: if rewinding to the specified root fails.
-    /// - VerificationError::CtInclusionError: if the underlying proof verification fails.
+    /// - `VerificationError::LeafNotFound`: if the leaf hash does not exist in the tree,
+    /// - `VerificationError::LeafNotPresentAtTree`: if the leaf was added after the specified root.
+    /// - `VerificationError::RewindError`: if rewinding to the specified root fails.
+    /// - `VerificationError::CtInclusionError`: if the underlying proof verification fails.
     pub fn verify_inclusion_at_root(
         &self,
         leaf_hash: &[u8],
@@ -259,7 +259,7 @@ impl CtMerkleTree {
     /// - `ProofError::RootNotFound`: if either root does not exist in the tree's history,
     /// - `ProofError::SameRoot`: if both roots are identical, 
     /// - `ProofError::InvalidRootOrder`: if the old root is from a tree that is not strictly smaller than the new root's tree.
-    /// - `ProofError::RewindError`: if rewinding to new_root fails
+    /// - `ProofError::RewindError`: if rewinding to `new_root` fails
     pub fn prove_consistency_between(
         &self,
         old_root: &[u8],
@@ -303,9 +303,9 @@ impl CtMerkleTree {
     ///
     /// # Errors
     ///
-    /// - RootNotFound: if the old_root was not found
-    /// - RewindError: if rewinding to new_root failed
-    /// - CtConsistencyError: if the underlying proof verification fails
+    /// - `RootNotFound`: if the `old_root` was not found
+    /// - `RewindError`: if rewinding to `new_root` failed
+    /// - `CtConsistencyError`: if the underlying proof verification fails
     pub fn verify_consistency_between(
         &self,
         old_root: &[u8],

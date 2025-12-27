@@ -16,13 +16,13 @@ pub struct LogMetrics {
     pub last_batch_leaves: u64,
     /// Total time for entire processing cycle (ms)
     pub last_total_ms: u64,
-    /// Time for copy_source_rows operation (ms)
+    /// Time for `copy_source_rows` operation (ms)
     pub last_copy_ms: u64,
     /// Time to query source tables (ms)
     pub last_query_sources_ms: u64,
-    /// Time to insert into merkle_log (ms)
+    /// Time to insert into `merkle_log` (ms)
     pub last_insert_merkle_log_ms: u64,
-    /// Time to fetch new entries from merkle_log (ms)
+    /// Time to fetch new entries from `merkle_log` (ms)
     pub last_fetch_merkle_log_ms: u64,
     /// Time to update in-memory tree (includes write lock hold time) (ms)
     pub last_tree_update_ms: u64,
@@ -37,7 +37,7 @@ pub struct LogMetrics {
 }
 
 impl LogMetrics {
-    /// Creates a new LogMetrics instance for the given log
+    /// Creates a new `LogMetrics` instance for the given log
     pub fn new(log_name: String) -> Self {
         Self {
             log_name,
@@ -88,38 +88,38 @@ impl LogMetrics {
 
     /// Returns an approximate size of a tree with n leaves in bytes
     ///
-    /// A CtMerkleTree has three fields
-    /// - MemoryBackedTree
-    ///     - stores a vector of LeafHash entries with size equal to tree.len()
+    /// A `CtMerkleTree` has three fields
+    /// - `MemoryBackedTree`
+    ///     - stores a vector of `LeafHash` entries with size equal to `tree.len()`
     ///     - stores a vector of internal hashes, which "contains all the hashes of the leaves and parents"
     /// 
-    /// A tree with n leaves has (2n - 1) nodes, each with a hash of LEAF_HASH_SIZE bytes.
-    /// Therefore, the internal hashes use (2n - 1) * LEAF_HASH_SIZE bytes.
-    /// Thus the total size of the MemoryBackedTree is approximately:
+    /// A tree with n leaves has (2n - 1) nodes, each with a hash of `LEAF_HASH_SIZE` bytes.
+    /// Therefore, the internal hashes use (2n - 1) * `LEAF_HASH_SIZE` bytes.
+    /// Thus the total size of the `MemoryBackedTree` is approximately:
     ///     
-    /// n + (2n - 1) * LEAF_HASH_SIZE
+    /// n + (2n - 1) * `LEAF_HASH_SIZE`
     ///
-    /// - leaf_hash_to_index: HashMap mapping leaf hashes to indices
-    ///     - stores n entries, each with a key of LEAF_HASH_SIZE bytes and a value of usize (8 bytes on 64-bit systems)     
+    /// - `leaf_hash_to_index`: `HashMap` mapping leaf hashes to indices
+    ///     - stores n entries, each with a key of `LEAF_HASH_SIZE` bytes and a value of usize (8 bytes on 64-bit systems)     
     ///  
     /// Thus, this map uses approximately
     ///
-    /// n * (LEAF_HASH_SIZE + 8) bytes.
+    /// n * (`LEAF_HASH_SIZE` + 8) bytes.
     ///
-    /// - root_hash_to_size: HashMap mapping root hashes to tree sizes
+    /// - `root_hash_to_size`: `HashMap` mapping root hashes to tree sizes
     ///    - in the current implementation, we are storing a root every time a new leaf is added (a possible
     ///      task to modify this is in the TODO), so this map stores one entry per leaf.
-    ///      Each entry has a key of LEAF_HASH_SIZE bytes and a value of usize (8 bytes on 64-bit systems).
+    ///      Each entry has a key of `LEAF_HASH_SIZE` bytes and a value of usize (8 bytes on 64-bit systems).
     ///     
     /// Thus, this map uses approximately
     ///
-    /// n * (LEAF_HASH_SIZE + 8) bytes.
+    /// n * (`LEAF_HASH_SIZE` + 8) bytes.
     ///
     /// Combining these, the total size in bytes is approximately:
-    ///     n + (2n - 1) * LEAF_HASH_SIZE + n * (LEAF_HASH_SIZE + 8) + n * (LEAF_HASH_SIZE + 8)
-    /// =   (3n - 1) * LEAF_HASH_SIZE + 2n * (LEAF_HASH_SIZE + 8)
+    ///     n + (2n - 1) * `LEAF_HASH_SIZE` + n * (`LEAF_HASH_SIZE` + 8) + n * (`LEAF_HASH_SIZE` + 8)
+    /// =   (3n - 1) * `LEAF_HASH_SIZE` + 2n * (`LEAF_HASH_SIZE` + 8)
     ///
-    /// Due to overhead from HashMap and Vector structures, actual memory usage may be higher, so we apply
+    /// Due to overhead from `HashMap` and Vector structures, actual memory usage may be higher, so we apply
     /// a multiplier of 1.2 to try to account for that.
     pub fn tree_size_bytes(n: u64) -> u64 {
         // we do not use 3n - 1 and just use 3n to avoid underflow when n = 0
@@ -144,7 +144,7 @@ pub struct GlobalMetrics {
 }
 
 impl GlobalMetrics {
-    /// Creates a new GlobalMetrics instance with default values
+    /// Creates a new `GlobalMetrics` instance with default values
     pub fn new() -> Self {
         Self {
             last_cycle_duration_ms: 0,
@@ -177,7 +177,7 @@ impl Default for GlobalMetrics {
 
 /// Container for all metrics
 pub struct Metrics {
-    /// Per-log metrics, keyed by log_name
+    /// Per-log metrics, keyed by `log_name`
     pub log_metrics: Arc<RwLock<HashMap<String, LogMetrics>>>,
     /// Global processing metrics
     pub global_metrics: Arc<RwLock<GlobalMetrics>>,
@@ -233,7 +233,7 @@ impl Metrics {
     }
 
     /// Get a snapshot of all metrics (logs and global)
-    /// Returns (HashMap<log_name, LogMetrics>, GlobalMetrics)
+    /// Returns (`HashMap`<`log_name`, `LogMetrics`>, `GlobalMetrics`)
     pub fn get_snapshot(&self) -> (HashMap<String, LogMetrics>, GlobalMetrics) {
         let log_metrics = self.log_metrics.read().clone();
         let global_metrics = self.global_metrics.read().clone();

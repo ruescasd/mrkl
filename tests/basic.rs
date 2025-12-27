@@ -263,7 +263,7 @@ async fn test_consistency_proofs() -> Result<()> {
         }
 
         // Store the last root from this batch
-        historical_roots.push(batch_roots.pop().unwrap());
+        historical_roots.push(batch_roots.pop().expect("Should have at least one root"));
         println!("📸 Storing final root for batch {}", i + 1);
     }
 
