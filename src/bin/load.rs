@@ -3,9 +3,9 @@
 //! Simulates a high-throughput application by continuously inserting entries
 //! into a test table that mrkl monitors. Uses direct database access.
 //!
-
 #![allow(clippy::print_stdout)]
 #![allow(clippy::print_stderr)]
+#![allow(clippy::arithmetic_side_effects)]
 //! # Usage
 //!
 //! ```bash

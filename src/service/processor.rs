@@ -11,7 +11,7 @@ use crate::service::state::AppState;
 #[derive(Debug, Clone)]
 pub struct BatchStats {
     /// Number of rows copied from source tables to `merkle_log`
-    pub rows_copied: i64,
+    pub rows_copied: u64,
     /// Time spent querying source tables (ms)
     pub query_sources_ms: u64,
     /// Time spent inserting into `merkle_log` (ms)
@@ -453,16 +453,19 @@ async fn copy_source_rows(
 
     // Insert into merkle_log with sequential IDs using multi-row INSERT
     // Process in chunks to avoid PostgreSQL parameter limit (~32K (probably 32,767) parameters = ~6.5K rows × 5 params)
-    const CHUNK_SIZE: usize = 1000; // 1000 rows × 5 params = 5000 parameters (well under limit)
+    // 1000 rows × 5 params = 5000 parameters (well under limit)
+    const CHUNK_SIZE: usize = 1000;
 
-    let rows_inserted = rows_to_insert.len() as i64;
+    let rows_inserted = rows_to_insert.len() as u64;
 
     let insert_start = std::time::Instant::now();
 
     if rows_inserted > 0 {
         // Process rows in chunks
         for (chunk_idx, chunk) in rows_to_insert.chunks(CHUNK_SIZE).enumerate() {
-            let chunk_offset = chunk_idx * CHUNK_SIZE;
+            // usize::MAX * usize::MAX << u64::MAX
+            #[allow(clippy::arithmetic_side_effects)]
+            let chunk_offset: u64 = chunk_idx as u64 * CHUNK_SIZE as u64;
 
             // Build multi-row INSERT statement for this chunk
             // INSERT INTO merkle_log (...) VALUES ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), ...
@@ -475,7 +478,11 @@ async fn copy_source_rows(
                 if offset > 0 {
                     query.push_str(", ");
                 }
+                // CHUNK_SIZE * 5 << usize::MAX
+                #[allow(clippy::arithmetic_side_effects)]
                 let base = offset * 5;
+                // CHUNK_SIZE * 5 << usize::MAX
+                #[allow(clippy::arithmetic_side_effects)]
                 query.push_str(&format!(
                     "(${}, ${}, ${}, ${}, ${})",
                     base + 1,
@@ -489,7 +496,9 @@ async fn copy_source_rows(
             // Flatten parameters for this chunk: for each row, add (id, log_name, source_table, source_id, leaf_hash)
             let mut param_values: Vec<(i64, &str, &str, i64, &[u8])> = Vec::new();
             for (offset, source_row) in chunk.iter().enumerate() {
-                let merkle_id = next_id + (chunk_offset + offset) as i64;
+                // the total number of log entries will never approach i64::MAX in practice
+                #[allow(clippy::arithmetic_side_effects)]
+                let merkle_id = next_id + (chunk_offset + offset as u64) as i64;
                 param_values.push((
                     merkle_id,
                     log_name,

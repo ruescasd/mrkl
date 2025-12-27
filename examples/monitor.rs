@@ -14,6 +14,7 @@
 //!   cargo run --example monitor -- `example_post_log`
 #![allow(clippy::print_stdout)]
 #![allow(clippy::print_stderr)]
+#![allow(clippy::arithmetic_side_effects)]
 
 use anyhow::Result;
 use base64::Engine;

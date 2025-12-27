@@ -57,7 +57,9 @@ impl LogMetrics {
     }
 
     /// Update metrics after processing a batch
+    /// `arithmetic_side_effects`: It would take 10^11 years to overflow u64 here at 1 batch/s
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::arithmetic_side_effects)]
     pub fn record_batch(
         &mut self,
         rows_copied: u64,
@@ -80,8 +82,6 @@ impl LogMetrics {
         self.last_tree_update_ms = tree_update_ms;
         self.batches_processed += 1;
         self.tree_size = tree_size;
-        // TODO: Calculate actual memory usage
-        // Rough estimate: tree_size * (32 bytes hash + internal nodes overhead)
         self.tree_memory_bytes = Self::tree_size_bytes(tree_size);
         self.last_updated = Utc::now();
     }
@@ -120,7 +120,10 @@ impl LogMetrics {
     /// =   (3n - 1) * `LEAF_HASH_SIZE` + 2n * (`LEAF_HASH_SIZE` + 8)
     ///
     /// Due to overhead from `HashMap` and Vector structures, actual memory usage may be higher, so we apply
-    /// a multiplier of 1.2 to try to account for that.
+    /// a multiplier of 1.2 to try to account for that. 
+    /// 
+    /// `arithmetic_side_effects`: tree sizes will never approach `u64::MAX` in practice, resource consumption will limit much earlier.
+    #[allow(clippy::arithmetic_side_effects)]
     pub fn tree_size_bytes(n: u64) -> u64 {
         // we do not use 3n - 1 and just use 3n to avoid underflow when n = 0
         let tree = (3 * n) * LEAF_HASH_SIZE;

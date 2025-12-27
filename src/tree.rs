@@ -256,6 +256,10 @@ impl CtMerkleTree {
     /// - `ProofError::SameRoot`: if both roots are identical,
     /// - `ProofError::InvalidRootOrder`: if the old root is from a tree that is not strictly smaller than the new root's tree.
     /// - `ProofError::RewindError`: if rewinding to `new_root` fails
+    /// 
+    /// # Panics
+    /// 
+    /// Infallible: `new_size` > `old_size`
     pub fn prove_consistency_between(
         &self,
         old_root: &[u8],
@@ -281,6 +285,9 @@ impl CtMerkleTree {
             return Err(ProofError::InvalidRootOrder);
         }
 
+        // Calculate number of additions
+        let num_additions: u64 = new_size.checked_sub(old_size).expect("new_size > old_size by above if");
+
         // Get tree state at new_root
         let new_tree = if new_root == self.root() {
             &self.tree
@@ -288,8 +295,7 @@ impl CtMerkleTree {
             &self.rewind(new_root).map_err(ProofError::RewindError)?
         };
 
-        // Calculate number of additions
-        let num_additions: u64 = new_size - old_size;
+
 
         // Generate proof from the historical tree state
         Ok(new_tree.prove_consistency(num_additions as usize))

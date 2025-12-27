@@ -325,6 +325,7 @@ async fn validate_column(
 
 /// Pretty-prints validation results
 #[allow(clippy::print_stdout)]
+#[allow(clippy::arithmetic_side_effects)]
 pub fn print_validation_report(validations: &[LogValidation]) {
     println!("\n╔════════════════════════════════════════════════════════════════╗");
     println!("║           DATABASE CONFIGURATION VALIDATION REPORT            ║");

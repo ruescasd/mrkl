@@ -4,6 +4,7 @@
 //! proof requests, verification, and error handling.
 #![allow(clippy::print_stdout)]
 #![allow(clippy::print_stderr)]
+#![allow(clippy::arithmetic_side_effects)]
 
 use anyhow::Result;
 use mrkl::service::Client;
