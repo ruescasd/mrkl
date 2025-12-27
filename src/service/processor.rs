@@ -177,14 +177,13 @@ pub async fn run_batch_processor(app_state: AppState) {
         let now = std::time::Instant::now();
         // Process each log independently
         for log_name in log_names.clone() {
-            if let Err(e) = process_log(&app_state, &log_name, batch_size).await {
-                if !e
+            if let Err(e) = process_log(&app_state, &log_name, batch_size).await
+                && !e
                     .to_string()
                     .contains("Another processing batch is running")
                 {
                     println!("⚠️ Error processing log '{}': {:?}", log_name, e);
                 }
-            }
         }
         let elapsed = now.elapsed();
         

@@ -84,7 +84,7 @@ pub async fn get_merkle_root(
     };
 
     let merkle_state = merkle_state_arc.read();
-    if merkle_state.tree.len() == 0 {
+    if merkle_state.tree.is_empty() {
         return ApiError::EmptyTree(log_name).to_response();
     }
 
@@ -184,7 +184,7 @@ pub async fn get_inclusion_proof(
             // Create InclusionProof with all necessary data
             let inclusion_proof = InclusionProof {
                 index,
-                proof_bytes: proof.as_bytes().iter().copied().collect(),
+                proof_bytes: proof.as_bytes().to_vec(),
                 root: tree.root(),
                 tree_size: tree.len(),
             };
@@ -271,7 +271,7 @@ pub async fn get_consistency_proof(
             let consistency_proof = ConsistencyProof {
                 old_tree_size: old_size,
                 old_root: query.old_root,
-                proof_bytes: proof.as_bytes().iter().copied().collect(),
+                proof_bytes: proof.as_bytes().to_vec(),
                 new_root: tree.root(),
                 new_tree_size: tree.len(),
             };

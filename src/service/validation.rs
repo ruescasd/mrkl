@@ -54,9 +54,9 @@ impl SourceValidation {
     /// - The timestamp column (if required) exists and has the correct type
     pub fn is_valid(&self) -> bool {
         self.table_exists
-            && self.id_column_valid.as_ref().map_or(false, |v| v.type_matches)
-            && self.hash_column_valid.as_ref().map_or(false, |v| v.type_matches)
-            && self.timestamp_column_valid.as_ref().map_or(true, |v| v.type_matches) // Optional, so true if None
+            && self.id_column_valid.as_ref().is_some_and(|v| v.type_matches)
+            && self.hash_column_valid.as_ref().is_some_and(|v| v.type_matches)
+            && self.timestamp_column_valid.as_ref().is_none_or(|v| v.type_matches) // Optional, so true if None
     }
 
     /// Returns a list of human-readable validation error messages

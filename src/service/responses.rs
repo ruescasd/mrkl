@@ -120,7 +120,7 @@ impl RootResponse {
     pub fn from_merkle_state(log_name: String, state: &crate::service::state::MerkleState) -> Self {
         Self {
             log_name,
-            merkle_root: base64::engine::general_purpose::STANDARD.encode(&state.tree.root()),
+            merkle_root: base64::engine::general_purpose::STANDARD.encode(state.tree.root()),
             tree_size: state.tree.len() as u64,
         }
     }

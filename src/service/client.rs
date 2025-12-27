@@ -54,7 +54,7 @@ impl Client {
     pub async fn get_root(&self, log_name: &str) -> Result<Vec<u8>> {
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/root", self.api_base_url, log_name))
+            .get(format!("{}/logs/{}/root", self.api_base_url, log_name))
             .send()
             .await?
             .json::<serde_json::Value>()
@@ -93,7 +93,7 @@ impl Client {
         // Make the request with the base64 encoded hash
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/proof", self.api_base_url, log_name))
+            .get(format!("{}/logs/{}/proof", self.api_base_url, log_name))
             .query(&query)
             .send()
             .await?;
@@ -124,7 +124,7 @@ impl Client {
 
         let response = self
             .http_client
-            .get(&format!(
+            .get(format!(
                 "{}/logs/{}/consistency",
                 self.api_base_url, log_name
             ))
@@ -180,7 +180,7 @@ impl Client {
         // Make the request
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/has_leaf", self.api_base_url, log_name))
+            .get(format!("{}/logs/{}/has_leaf", self.api_base_url, log_name))
             .query(&query)
             .send()
             .await?
@@ -210,7 +210,7 @@ impl Client {
         // Make the request
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/has_root", self.api_base_url, log_name))
+            .get(format!("{}/logs/{}/has_root", self.api_base_url, log_name))
             .query(&query)
             .send()
             .await?
@@ -237,7 +237,7 @@ impl Client {
     pub async fn has_log(&self, log_name: &str) -> Result<bool> {
         let response = self
             .http_client
-            .get(&format!("{}/logs/{}/exists", self.api_base_url, log_name))
+            .get(format!("{}/logs/{}/exists", self.api_base_url, log_name))
             .send()
             .await?
             .json::<serde_json::Value>()
