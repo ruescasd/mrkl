@@ -81,14 +81,15 @@ pub enum ApiError {
 
 impl ApiError {
     /// Convert error to `ApiResponse` with appropriate error message
+    #[must_use]
     pub fn to_response<T: Serialize>(self) -> ApiResponse<T> {
         match self {
             ApiError::LogNotFound(log_name) => ApiResponse::error_with_type(
-                format!("Log '{}' not found", log_name),
+                format!("Log '{log_name}' not found"),
                 "log_not_found",
             ),
             ApiError::EmptyTree(log_name) => ApiResponse::error_with_type(
-                format!("Merkle tree for log '{}' is empty", log_name),
+                format!("Merkle tree for log '{log_name}' is empty"),
                 "empty_tree",
             ),
             ApiError::InvalidRequest(msg) => ApiResponse::error_with_type(msg, "invalid_request"),
@@ -115,6 +116,7 @@ pub struct RootResponse {
 
 impl RootResponse {
     /// Creates a `RootResponse` from a `MerkleState`
+    #[must_use]
     pub fn from_merkle_state(log_name: String, state: &crate::service::state::MerkleState) -> Self {
         Self {
             log_name,

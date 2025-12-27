@@ -40,11 +40,11 @@ async fn main() -> Result<()> {
 
     // Step 2: Create verification client
     let client = Client::new(&server_url)?;
-    println!("🔗 Connected to server: {}\n", server_url);
+    println!("🔗 Connected to server: {server_url}\n");
 
     // Step 3: Insert - Post a new entry (simulated via database)
     let data = format!("Example entry at {}", chrono::Utc::now());
-    println!("📝 Inserting entry: \"{}\"", data);
+    println!("📝 Inserting entry: \"{data}\"");
     let hash = insert_entry(&db_client, &data).await?;
     println!("✅ Entry inserted\n");
 
@@ -65,13 +65,12 @@ async fn main() -> Result<()> {
     println!();
 
     println!("🔐 Verifying inclusion proof...");
-    let is_valid = proof.verify(&hash)?;
+    let result = proof.verify(&hash);
 
-    if is_valid {
+    if result.is_ok() {
         println!("✅ Proof verification PASSED");
         println!(
-            "   Entry \"{}\" is cryptographically verified to be in the log!",
-            data
+            "   Entry \"{data}\" is cryptographically verified to be in the log!"
         );
     } else {
         println!("❌ Proof verification FAILED");
@@ -92,7 +91,7 @@ async fn setup_environment() -> Result<tokio_postgres::Client> {
     // Spawn connection handler
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Database connection error: {}", e);
+            eprintln!("Database connection error: {e}");
         }
     });
 
@@ -110,14 +109,13 @@ async fn setup_environment() -> Result<tokio_postgres::Client> {
     client
         .batch_execute(&format!(
             r#"
-            CREATE TABLE IF NOT EXISTS {} (
+            CREATE TABLE IF NOT EXISTS {SOURCE_TABLE} (
                 id          BIGSERIAL PRIMARY KEY,
                 data        TEXT NOT NULL,
                 created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 leaf_hash   BYTEA NOT NULL
             );
-            "#,
-            SOURCE_TABLE
+            "#
         ))
         .await?;
 
@@ -144,8 +142,7 @@ async fn insert_entry(client: &tokio_postgres::Client, data: &str) -> Result<Vec
     client
         .execute(
             &format!(
-                "INSERT INTO {} (data, leaf_hash) VALUES ($1, $2)",
-                SOURCE_TABLE
+                "INSERT INTO {SOURCE_TABLE} (data, leaf_hash) VALUES ($1, $2)"
             ),
             &[&data, &hash.as_slice()],
         )
@@ -174,7 +171,7 @@ async fn wait_for_log_discovery(client: &Client) -> Result<()> {
                 return Err(anyhow::anyhow!("Timeout: Server never discovered the log"));
             }
             Err(e) => {
-                return Err(anyhow::anyhow!("Failed to check log existence: {}", e));
+                return Err(anyhow::anyhow!("Failed to check log existence: {e}"));
             }
         }
     }

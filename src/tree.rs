@@ -67,6 +67,7 @@ pub struct CtMerkleTree {
 
 impl CtMerkleTree {
     /// Creates a new empty merkle tree
+    #[must_use]
     pub fn new() -> Self {
         Self {
             tree: MemoryBackedTree::new(),
@@ -97,16 +98,19 @@ impl CtMerkleTree {
     }
 
     /// Gets the current root hash
+    #[must_use]
     pub fn root(&self) -> Vec<u8> {
         self.tree.root().as_bytes().to_vec()
     }
 
     /// Gets the current number of leaves in the tree
+    #[must_use]
     pub fn len(&self) -> u64 {
         self.tree.len()
     }
 
     /// Returns true if the tree is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tree.len() == 0
     }
@@ -159,11 +163,13 @@ impl CtMerkleTree {
     }
 
     /// Gets the index for a given leaf hash
+    #[must_use]
     pub fn get_index(&self, hash: &[u8]) -> Option<u64> {
         self.leaf_hash_to_index.get(hash).copied()
     }
 
     /// Gets the tree size for a given root hash
+    #[must_use]
     pub fn get_size_for_root(&self, root: &[u8]) -> Option<u64> {
         self.root_hash_to_size.get(root).copied()
     }

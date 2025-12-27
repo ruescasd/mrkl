@@ -38,6 +38,7 @@ pub struct LogMetrics {
 
 impl LogMetrics {
     /// Creates a new `LogMetrics` instance for the given log
+    #[must_use]
     pub fn new(log_name: String) -> Self {
         Self {
             log_name,
@@ -124,6 +125,7 @@ impl LogMetrics {
     /// 
     /// `arithmetic_side_effects`: tree sizes will never approach `u64::MAX` in practice, resource consumption will limit much earlier.
     #[allow(clippy::arithmetic_side_effects)]
+    #[must_use]
     pub const fn tree_size_bytes(n: u64) -> u64 {
         // we do not use 3n - 1 and just use 3n to avoid underflow when n = 0
         let tree = (3 * n) * LEAF_HASH_SIZE;
@@ -148,6 +150,7 @@ pub struct GlobalMetrics {
 
 impl GlobalMetrics {
     /// Creates a new `GlobalMetrics` instance with default values
+    #[must_use]
     pub fn new() -> Self {
         Self {
             last_cycle_duration_ms: 0,
@@ -188,6 +191,7 @@ pub struct Metrics {
 
 impl Metrics {
     /// Creates a new Metrics container with empty log metrics and default global metrics
+    #[must_use]
     pub fn new() -> Self {
         Self {
             log_metrics: Arc::new(RwLock::new(HashMap::new())),
@@ -196,6 +200,7 @@ impl Metrics {
     }
 
     /// Get or create metrics for a log
+    #[must_use]
     pub fn get_or_create_log_metrics(&self, log_name: &str) -> LogMetrics {
         let mut log_metrics = self.log_metrics.write();
         log_metrics
@@ -226,17 +231,20 @@ impl Metrics {
     }
 
     /// Get all log metrics
+    #[must_use]
     pub fn get_all_log_metrics(&self) -> Vec<LogMetrics> {
         self.log_metrics.read().values().cloned().collect()
     }
 
     /// Get global metrics
+    #[must_use]
     pub fn get_global_metrics(&self) -> GlobalMetrics {
         self.global_metrics.read().clone()
     }
 
     /// Get a snapshot of all metrics (logs and global)
     /// Returns (`HashMap`<`log_name`, `LogMetrics`>, `GlobalMetrics`)
+    #[must_use]
     pub fn get_snapshot(&self) -> (HashMap<String, LogMetrics>, GlobalMetrics) {
         let log_metrics = self.log_metrics.read().clone();
         let global_metrics = self.global_metrics.read().clone();

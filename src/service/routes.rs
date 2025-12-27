@@ -149,8 +149,7 @@ pub async fn get_inclusion_proof(
         Err(e) => {
             tracing::debug!(error = %e, "Invalid proof request");
             return ApiError::InvalidRequest(format!(
-                "Invalid request parameters: {}. The hash parameter must be base64 encoded.",
-                e
+                "Invalid request parameters: {e}. The hash parameter must be base64 encoded."
             ))
             .to_response();
         }
@@ -172,8 +171,7 @@ pub async fn get_inclusion_proof(
         Ok(proof) => proof,
         Err(e) => {
             return ApiError::ProofGenerationFailed(format!(
-                "Failed to generate inclusion proof: {:?}",
-                e
+                "Failed to generate inclusion proof: {e:?}"
             ))
             .to_response();
         }
@@ -200,7 +198,7 @@ pub async fn get_inclusion_proof(
                 proof: inclusion_proof,
             })
         }
-        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification error: {:?}", e))
+        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification error: {e:?}"))
             .to_response(),
     }
 }
@@ -238,8 +236,7 @@ pub async fn get_consistency_proof(
         Err(e) => {
             tracing::debug!(error = %e, "Invalid consistency proof request");
             return ApiError::InvalidRequest(format!(
-                "Invalid request parameters: {}. The old_root parameter must be base64 encoded.",
-                e
+                "Invalid request parameters: {e}. The old_root parameter must be base64 encoded."
             ))
             .to_response();
         }
@@ -261,8 +258,7 @@ pub async fn get_consistency_proof(
         Ok(proof) => proof,
         Err(e) => {
             return ApiError::ProofGenerationFailed(format!(
-                "Failed to generate consistency proof: ProofError: {:?}",
-                e
+                "Failed to generate consistency proof: ProofError: {e:?}"
             ))
             .to_response();
         }
@@ -289,7 +285,7 @@ pub async fn get_consistency_proof(
                 proof: consistency_proof,
             })
         }
-        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification failed: {:?}", e))
+        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification failed: {e:?}"))
             .to_response(),
     }
 }
@@ -321,8 +317,7 @@ pub async fn has_leaf(
         Err(e) => {
             tracing::debug!(error = %e, "Invalid has_leaf request");
             return ApiError::InvalidRequest(format!(
-                "Invalid request parameters: {}. The hash parameter must be base64 encoded.",
-                e
+                "Invalid request parameters: {e}. The hash parameter must be base64 encoded."
             ))
             .to_response();
         }
@@ -372,8 +367,7 @@ pub async fn has_root(
         Err(e) => {
             tracing::debug!(error = %e, "Invalid has_root request");
             return ApiError::InvalidRequest(format!(
-                "Invalid request parameters: {}. The root parameter must be base64 encoded.",
-                e
+                "Invalid request parameters: {e}. The root parameter must be base64 encoded."
             ))
             .to_response();
         }
@@ -503,7 +497,7 @@ pub async fn admin_status(State(app_state): State<AppState>) -> impl IntoRespons
     };
 
     ApiResponse::success(AdminControlResponse {
-        message: format!("Batch processor is {}", state_name),
+        message: format!("Batch processor is {state_name}"),
         state: state_name.to_string(),
     })
 }
@@ -514,7 +508,7 @@ pub async fn admin_status(State(app_state): State<AppState>) -> impl IntoRespons
 /// that should be represented as base64 strings in JSON. Used by query parameter
 /// structs to accept base64-encoded hashes from clients.
 pub mod proof_bytes_format {
-    use super::*;
+    use super::{Engine, BASE64, Deserialize};
     use serde::{Deserializer, Serializer};
 
     /// Serialize a byte vector as a base64 string

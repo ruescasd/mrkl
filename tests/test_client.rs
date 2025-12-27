@@ -42,7 +42,7 @@ impl TestClient {
         // Spawn the connection handler
         tokio::spawn(async move {
             if let Err(e) = connection.await {
-                eprintln!("connection error: {}", e);
+                eprintln!("connection error: {e}");
             }
         });
 
@@ -97,7 +97,7 @@ impl TestClient {
                 .await?;
 
             if insert_result > 0 {
-                println!("✅ Created log '{}'", log_name);
+                println!("✅ Created log '{log_name}'");
             }
 
             // Create and register source tables
@@ -106,25 +106,23 @@ impl TestClient {
                 let create_table_sql = if has_timestamp {
                     format!(
                         r#"
-                        CREATE TABLE IF NOT EXISTS {} (
+                        CREATE TABLE IF NOT EXISTS {table_name} (
                             id          BIGSERIAL PRIMARY KEY,
                             data        TEXT NOT NULL,
                             created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                             leaf_hash   BYTEA NOT NULL
                         );
-                        "#,
-                        table_name
+                        "#
                     )
                 } else {
                     format!(
                         r#"
-                        CREATE TABLE IF NOT EXISTS {} (
+                        CREATE TABLE IF NOT EXISTS {table_name} (
                             id          BIGSERIAL PRIMARY KEY,
                             data        TEXT NOT NULL,
                             leaf_hash   BYTEA NOT NULL
                         );
-                        "#,
-                        table_name
+                        "#
                     )
                 };
 
@@ -147,8 +145,7 @@ impl TestClient {
 
                 if result > 0 {
                     println!(
-                        "✅ Registered '{}' in log '{}' (timestamp: {})",
-                        table_name, log_name, has_timestamp
+                        "✅ Registered '{table_name}' in log '{log_name}' (timestamp: {has_timestamp})"
                     );
                 }
             }
@@ -194,8 +191,7 @@ impl TestClient {
             .db_client
             .query_one(
                 &format!(
-                    "INSERT INTO {} (data, leaf_hash) VALUES ($1, $2) RETURNING id",
-                    table_name
+                    "INSERT INTO {table_name} (data, leaf_hash) VALUES ($1, $2) RETURNING id"
                 ),
                 &[&data, &hash_result.as_slice()],
             )
@@ -235,15 +231,14 @@ impl TestClient {
             )
             .await?;
 
-        println!("\n🔍 Last {} entries in merkle_log:", count);
+        println!("\n🔍 Last {count} entries in merkle_log:");
         for row in rows.iter().rev() {
             let id: i64 = row.get(0);
             let log_name: String = row.get(1);
             let source_table: String = row.get(2);
             let source_id: i64 = row.get(3);
             println!(
-                "  id={}, log={}, source={}:{}",
-                id, log_name, source_table, source_id
+                "  id={id}, log={log_name}, source={source_table}:{source_id}"
             );
         }
         println!();
@@ -288,10 +283,7 @@ impl TestClient {
 
             if start_time.elapsed() > timeout {
                 return Err(anyhow::anyhow!(
-                    "Timeout waiting for log size. Expected {}, got {} after {:?}",
-                    expected_size,
-                    current_size,
-                    timeout
+                    "Timeout waiting for log size. Expected {expected_size}, got {current_size} after {timeout:?}"
                 ));
             }
 

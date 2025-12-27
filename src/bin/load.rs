@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            println!("Connection error: {}", e);
+            println!("Connection error: {e}");
         }
     });
 
@@ -80,13 +80,13 @@ async fn main() -> Result<()> {
 
         // Insert rows into all logs and all sources
         for log_idx in 0..args.num_logs {
-            let log_name = format!("load_test_{}", log_idx);
+            let log_name = format!("load_test_{log_idx}");
 
             let mut total_inserted = 0;
 
             // Insert into all source tables for this log
             for source_idx in 0..args.num_sources {
-                let source_table = format!("{}_source_{}", log_name, source_idx);
+                let source_table = format!("{log_name}_source_{source_idx}");
                 let rows_per_source = args.rows_per_interval / args.num_sources as u32;
 
                 let inserted =
@@ -103,8 +103,7 @@ async fn main() -> Result<()> {
 
         let elapsed = start.elapsed();
         println!(
-            "Batch complete in {:?} | Total rows: {}\n",
-            elapsed, counter
+            "Batch complete in {elapsed:?} | Total rows: {counter}\n"
         );
 
         // Wait for next interval
@@ -121,7 +120,7 @@ async fn setup_test_environment(
     num_sources: usize,
 ) -> Result<()> {
     for log_idx in 0..num_logs {
-        let log_name = format!("load_test_{}", log_idx);
+        let log_name = format!("load_test_{log_idx}");
 
         // Create log entry
         client
@@ -135,19 +134,18 @@ async fn setup_test_environment(
 
         // Create N source tables for this log
         for source_idx in 0..num_sources {
-            let source_table = format!("{}_source_{}", log_name, source_idx);
+            let source_table = format!("{log_name}_source_{source_idx}");
 
             // Create source table (all have same schema with timestamp)
             client
                 .execute(
                     &format!(
-                        "CREATE TABLE IF NOT EXISTS {} (
+                        "CREATE TABLE IF NOT EXISTS {source_table} (
                             id BIGSERIAL PRIMARY KEY,
                             data TEXT NOT NULL,
                             hash BYTEA NOT NULL,
                             created_at TIMESTAMPTZ DEFAULT NOW()
-                        )",
-                        source_table
+                        )"
                     ),
                     &[],
                 )
@@ -166,7 +164,7 @@ async fn setup_test_environment(
                 .await?;
         }
 
-        println!("  ✓ Configured log: {} ({} sources)", log_name, num_sources);
+        println!("  ✓ Configured log: {log_name} ({num_sources} sources)");
     }
 
     Ok(())
@@ -181,14 +179,13 @@ async fn insert_rows(
 ) -> Result<u32> {
     for _ in 0..count {
         *counter += 1;
-        let data = format!("entry_{}", counter);
+        let data = format!("entry_{counter}");
         let hash = compute_hash(&data);
 
         client
             .execute(
                 &format!(
-                    "INSERT INTO {} (data, hash, created_at) VALUES ($1, $2, $3)",
-                    table_name
+                    "INSERT INTO {table_name} (data, hash, created_at) VALUES ($1, $2, $3)"
                 ),
                 &[&data, &hash, &Utc::now()],
             )

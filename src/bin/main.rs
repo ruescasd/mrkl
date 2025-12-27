@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         service::print_validation_report(&validations);
 
         // Exit with status code based on validation result
-        let all_valid = validations.iter().all(|v| v.is_valid());
+        let all_valid = validations.iter().all(mrkl::service::LogValidation::is_valid);
         std::process::exit(if all_valid { 0 } else { 1 });
     }
 

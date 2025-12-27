@@ -52,12 +52,12 @@ impl Client {
                 .get("error")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error getting log size: {}", error_msg));
+            return Err(anyhow::anyhow!("Error getting log size: {error_msg}"));
         }
 
         let size = response
             .get("size")
-            .and_then(|v| v.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| anyhow::anyhow!("Invalid size response"))?;
 
         Ok(size)
@@ -84,7 +84,7 @@ impl Client {
                 .get("error")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error getting root: {}", error_msg));
+            return Err(anyhow::anyhow!("Error getting root: {error_msg}"));
         }
 
         // Parse the base64 encoded root from the response
@@ -132,7 +132,7 @@ impl Client {
                 .get("error")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error getting inclusion proof: {}", error_msg));
+            return Err(anyhow::anyhow!("Error getting inclusion proof: {error_msg}"));
         }
 
         // Parse into our structured MerkleProof type
@@ -175,7 +175,7 @@ impl Client {
                 .get("error")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error getting consistency proof: {}", error_msg));
+            return Err(anyhow::anyhow!("Error getting consistency proof: {error_msg}"));
         }
 
         // Parse into our structured ConsistencyProof type
@@ -206,7 +206,9 @@ impl Client {
         // Verify the proof cryptographically
         proof
             .verify()
-            .map_err(|e| anyhow::anyhow!("Proof verification failed: {}", e))
+            .map_err(|e| anyhow::anyhow!("Proof verification failed: {e}"))?;
+        
+        Ok(true)
     }
 
     /// Checks if a leaf (identified by its hash) exists in the log
@@ -241,13 +243,13 @@ impl Client {
                 .get("error")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error checking leaf existence: {}", error_msg));
+            return Err(anyhow::anyhow!("Error checking leaf existence: {error_msg}"));
         }
 
         // Extract exists field
         let exists = response
             .get("exists")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| anyhow::anyhow!("Invalid has_leaf response"))?;
 
         Ok(exists)
@@ -278,13 +280,13 @@ impl Client {
                 .get("error")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error checking root existence: {}", error_msg));
+            return Err(anyhow::anyhow!("Error checking root existence: {error_msg}"));
         }
 
         // Extract exists field
         let exists = response
             .get("exists")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| anyhow::anyhow!("Invalid has_root response"))?;
 
         Ok(exists)
@@ -311,13 +313,13 @@ impl Client {
                 .get("error")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error checking log existence: {}", error_msg));
+            return Err(anyhow::anyhow!("Error checking log existence: {error_msg}"));
         }
 
         // Extract exists field
         let exists = response
             .get("exists")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| anyhow::anyhow!("Invalid has_log response"))?;
 
         Ok(exists)

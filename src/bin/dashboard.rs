@@ -102,7 +102,7 @@ async fn fetch_metrics(url: &str) -> Result<MetricsResponse> {
             // eprintln!("Parsed {} logs", logs.len());
             Ok(MetricsResponse { logs, global })
         }
-        ApiResponse::Error { error } => Err(anyhow::anyhow!("API error: {}", error)),
+        ApiResponse::Error { error } => Err(anyhow::anyhow!("API error: {error}")),
     }
 }
 
@@ -126,7 +126,7 @@ fn format_memory(bytes: u64) -> String {
     } else if bytes >= 1_024 {
         format!("{:.1}KB", bytes as f64 / 1_024.0)
     } else {
-        format!("{}B", bytes)
+        format!("{bytes}B")
     }
 }
 
@@ -220,7 +220,7 @@ async fn main() -> Result<()> {
     // Get server URL from environment or use default
     let server_url =
         std::env::var("MRKL_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
-    let metrics_url = format!("{}/metrics", server_url);
+    let metrics_url = format!("{server_url}/metrics");
 
     // Refresh interval in seconds
     let refresh_interval = std::env::var("REFRESH_INTERVAL")
@@ -228,8 +228,8 @@ async fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
 
-    println!("Connecting to {}...", metrics_url);
-    println!("Refresh interval: {}s", refresh_interval);
+    println!("Connecting to {metrics_url}...");
+    println!("Refresh interval: {refresh_interval}s");
     println!();
 
     // No raw mode - allows normal terminal interactions (text selection, etc.)
@@ -238,7 +238,7 @@ async fn main() -> Result<()> {
         match fetch_metrics(&metrics_url).await {
             Ok(metrics) => {
                 if let Err(e) = display_metrics(&metrics) {
-                    eprintln!("Display error: {}", e);
+                    eprintln!("Display error: {e}");
                 }
             }
             Err(e) => {
@@ -247,8 +247,8 @@ async fn main() -> Result<()> {
                     terminal::Clear(ClearType::All),
                     cursor::MoveTo(0, 0)
                 )?;
-                println!("⚠️  Failed to fetch metrics: {}", e);
-                println!("Retrying in {}s...", refresh_interval);
+                println!("⚠️  Failed to fetch metrics: {e}");
+                println!("Retrying in {refresh_interval}s...");
                 println!("\nPress Ctrl+C to exit");
             }
         }

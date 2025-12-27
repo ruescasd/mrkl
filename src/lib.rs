@@ -65,14 +65,14 @@ impl InclusionProof {
     /// # Errors
     ///
     /// Returns an error if the root hash length is invalid.
-    pub fn verify(&self, hash: &[u8]) -> Result<bool> {
+    pub fn verify(&self, hash: &[u8]) -> Result<(), ct_merkle::InclusionVerifError> {
         // Create the leaf hash from the provided hash
         let leaf_hash = LeafHash::new(hash.to_vec());
 
         // Create a digest from our stored root bytes
         let mut digest = Output::<Sha256>::default();
         if self.root.len() != digest.len() {
-            return Err(anyhow::anyhow!("Invalid root hash length"));
+            return Err(ct_merkle::InclusionVerifError::MalformedProof);
         }
         digest.copy_from_slice(&self.root);
 
@@ -83,10 +83,11 @@ impl InclusionProof {
         let proof = CtInclusionProof::<Sha256>::from_bytes(self.proof_bytes.clone());
 
         // Verify using root's verification method
-        match root_hash.verify_inclusion(&leaf_hash, self.index, &proof) {
+        /*match root_hash.verify_inclusion(&leaf_hash, self.index, &proof) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
-        }
+        }*/
+        root_hash.verify_inclusion(&leaf_hash, self.index, &proof)
     }
 }
 
@@ -113,7 +114,7 @@ impl ConsistencyProof {
     /// - `MalformedProof`: if the old or new root hash lengths are invalid, or if the proof bytes are malformed
     /// - `ConsistencyVerifError`: if the proof verification fails
     ///
-    pub fn verify(&self) -> Result<bool, ct_merkle::ConsistencyVerifError> {
+    pub fn verify(&self) -> Result<(), ct_merkle::ConsistencyVerifError> {
         // Create digest from old root bytes
         let mut old_digest = Output::<Sha256>::default();
         if self.old_root.len() != old_digest.len() {
@@ -138,7 +139,7 @@ impl ConsistencyProof {
         let proof = CtConsistencyProof::<Sha256>::try_from_bytes(self.proof_bytes.clone())?;
 
         // Verify consistency
-        new_root.verify_consistency(&old_root, &proof).map(|_| true)
+        new_root.verify_consistency(&old_root, &proof)
     }
 }
 
@@ -160,11 +161,13 @@ impl LeafHash {
     ///
     /// Note: Cannot be made `const` as `Vec<u8>` is not yet const-compatible
     #[allow(clippy::missing_const_for_fn)]
+    #[must_use]
     pub fn new(hash: Vec<u8>) -> Self {
         Self { hash }
     }
 
     /// Returns the raw hash bytes
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.hash
     }

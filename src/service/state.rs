@@ -21,6 +21,7 @@ impl ProcessorState {
     /// Converts a u8 value to `ProcessorState`
     ///
     /// Used to read the atomic state value. Unknown values default to Running.
+    #[must_use]
     pub const fn from_u8(value: u8) -> Self {
         match value {
             1 => ProcessorState::Paused,
@@ -57,6 +58,7 @@ pub struct MerkleState {
 
 impl MerkleState {
     /// Creates a new empty merkle state
+    #[must_use]
     pub fn new() -> Self {
         Self {
             tree: CtMerkleTree::new(),

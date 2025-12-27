@@ -52,6 +52,7 @@ impl SourceValidation {
     /// - The ID column exists and has the correct type
     /// - The hash column exists and has the correct type
     /// - The timestamp column (if required) exists and has the correct type
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.table_exists
             && self
@@ -71,6 +72,7 @@ impl SourceValidation {
     /// Returns a list of human-readable validation error messages
     ///
     /// If the source is valid, returns an empty vector.
+    #[must_use]
     pub fn errors(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
@@ -129,16 +131,19 @@ impl LogValidation {
     /// Checks if this log configuration is valid
     ///
     /// A log is valid if it has at least one source and all sources are valid.
+    #[must_use]
     pub fn is_valid(&self) -> bool {
-        !self.sources.is_empty() && self.sources.iter().all(|s| s.is_valid())
+        !self.sources.is_empty() && self.sources.iter().all(SourceValidation::is_valid)
     }
 
     /// Returns the number of valid sources in this log
+    #[must_use]
     pub fn valid_source_count(&self) -> usize {
         self.sources.iter().filter(|s| s.is_valid()).count()
     }
 
     /// Returns the number of invalid sources in this log
+    #[must_use]
     pub fn invalid_source_count(&self) -> usize {
         self.sources.iter().filter(|s| !s.is_valid()).count()
     }
@@ -380,7 +385,7 @@ pub fn print_validation_report(validations: &[LogValidation]) {
 
                 if !source.is_valid() {
                     for error in source.errors() {
-                        println!("      ⚠️  {}", error);
+                        println!("      ⚠️  {error}");
                     }
                 }
             }
@@ -392,10 +397,10 @@ pub fn print_validation_report(validations: &[LogValidation]) {
     println!("╔════════════════════════════════════════════════════════════════╗");
     println!("║                            SUMMARY                             ║");
     println!("╚════════════════════════════════════════════════════════════════╝");
-    println!("Total logs: {}", total_logs);
-    println!("Valid logs: {} / {}", valid_logs, total_logs);
-    println!("Total sources: {}", total_sources);
-    println!("Valid sources: {} / {}", valid_sources, total_sources);
+    println!("Total logs: {total_logs}");
+    println!("Valid logs: {valid_logs} / {total_logs}");
+    println!("Total sources: {total_sources}");
+    println!("Valid sources: {valid_sources} / {total_sources}");
     println!();
 
     if valid_logs == total_logs && valid_sources == total_sources {

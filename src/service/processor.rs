@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use deadpool_postgres::Object as PooledConnection;
+use deadpool_postgres::{Object as PooledConnection, Transaction};
 use std::collections::{BTreeSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
@@ -329,6 +329,11 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
     Ok(())
 }
 
+/// When using bulk inserts, we process in chunks to avoid postgresql parameter limit 
+/// (~32K (probably 32,767) parameters = ~6.5K rows × 5 params)
+/// 1000 rows × 5 params = 5000 parameters (well under limit)
+const CHUNK_SIZE: usize = 1000;
+
 /// Process a batch of rows from configured source tables into `merkle_log` for a specific log
 /// Returns statistics about the batch processing operation
 #[allow(clippy::cognitive_complexity)]
@@ -377,91 +382,25 @@ async fn copy_source_rows(
 
     if !lock_acquired {
         return Err(anyhow::anyhow!(
-            "Another processing batch is running for log '{}'",
-            log_name
+            "Another processing batch is running for log '{log_name}'"
         ));
     }
+
+    let query_start = std::time::Instant::now();
+    let rows_to_insert = get_source_rows(&txn, valid_configs, log_name, batch_size).await?;
+    let query_duration = query_start.elapsed();
 
     // Get next available ID in merkle_log (globally unique across all logs)
     let next_id: i64 = txn
         .query_one("SELECT COALESCE(MAX(id), 0) + 1 FROM merkle_log", &[])
         .await?
         .get(0);
-
-    // Collect rows from all configured source tables into a BTreeSet for automatic sorting
-    let mut all_source_rows = BTreeSet::new();
-
-    let query_start = std::time::Instant::now();
-    for source_config in valid_configs.iter() {
-        // Get last processed source_id for this specific source table in this log
-        let last_processed: i64 = txn
-            .query_one(
-                "SELECT COALESCE(MAX(source_id), 0) FROM merkle_log WHERE log_name = $1 AND source_table = $2",
-                &[&log_name, &source_config.table_name],
-            )
-            .await?
-            .get(0);
-
-        // Build query based on whether timestamp column is configured
-        let query = if let Some(ref timestamp_col) = source_config.timestamp_column {
-            format!(
-                "SELECT {}, {}, {} FROM {} WHERE {} > $1 ORDER BY {} LIMIT $2",
-                source_config.id_column,
-                source_config.hash_column,
-                timestamp_col,
-                source_config.table_name,
-                source_config.id_column,
-                source_config.id_column
-            )
-        } else {
-            format!(
-                "SELECT {}, {} FROM {} WHERE {} > $1 ORDER BY {} LIMIT $2",
-                source_config.id_column,
-                source_config.hash_column,
-                source_config.table_name,
-                source_config.id_column,
-                source_config.id_column
-            )
-        };
-
-        let rows = txn.query(&query, &[&last_processed, &batch_size]).await?;
-        for row in rows {
-            let source_id: i64 = row.get(0);
-            let leaf_hash: Vec<u8> = row.get(1);
-            let order_timestamp: Option<DateTime<Utc>> = if source_config.timestamp_column.is_some()
-            {
-                row.get(2)
-            } else {
-                None
-            };
-
-            all_source_rows.insert(SourceRow {
-                source_table: source_config.table_name.clone(),
-                source_id,
-                leaf_hash,
-                order_timestamp,
-            });
-        }
-    }
-    let query_duration = query_start.elapsed();
-
-    // BTreeSet automatically maintains sorted order, limit to batch_size after merging
-    let rows_to_insert: Vec<_> = all_source_rows
-        .into_iter()
-        .take(batch_size as usize)
-        .collect();
-
-    // Insert into merkle_log with sequential IDs using multi-row INSERT
-    // Process in chunks to avoid PostgreSQL parameter limit (~32K (probably 32,767) parameters = ~6.5K rows × 5 params)
-    // 1000 rows × 5 params = 5000 parameters (well under limit)
-    const CHUNK_SIZE: usize = 1000;
-
-    let rows_inserted = rows_to_insert.len() as u64;
-
+    
     let insert_start = std::time::Instant::now();
 
-    if rows_inserted > 0 {
-        // Process rows in chunks
+    if !rows_to_insert.is_empty() {
+        // Insert into merkle_log with sequential IDs using multi-row INSERT
+        // Process in chunks to avoid PostgreSQL parameter limit (~32K (probably 32,767) parameters = ~6.5K rows × 5 params)
         for (chunk_idx, chunk) in rows_to_insert.chunks(CHUNK_SIZE).enumerate() {
             // usize::MAX * usize::MAX << u64::MAX
             #[allow(clippy::arithmetic_side_effects)]
@@ -525,10 +464,78 @@ async fn copy_source_rows(
     txn.commit().await?;
 
     Ok(BatchStats {
-        rows_copied: rows_inserted,
+        rows_copied: rows_to_insert.len() as u64,
         query_sources_ms: query_duration.as_millis() as u64,
         insert_merkle_log_ms: insert_duration.as_millis() as u64,
     })
+}
+
+/// Retrieves rows from all valid source tables for a specific log, up to `batch_size` total
+async fn get_source_rows(txn: &Transaction<'_>, valid_configs: Vec<SourceConfig>, log_name: &str, batch_size: i64) -> Result<Vec<SourceRow>> {
+
+    // Collect rows from all configured source tables into a BTreeSet for automatic sorting
+    let mut all_source_rows = BTreeSet::new();
+
+    for source_config in &valid_configs {
+        // Get last processed source_id for this specific source table in this log
+        let last_processed: i64 = txn
+            .query_one(
+                "SELECT COALESCE(MAX(source_id), 0) FROM merkle_log WHERE log_name = $1 AND source_table = $2",
+                &[&log_name, &source_config.table_name],
+            )
+            .await?
+            .get(0);
+
+        // Build query based on whether timestamp column is configured
+        let query = if let Some(ref timestamp_col) = source_config.timestamp_column {
+            format!(
+                "SELECT {}, {}, {} FROM {} WHERE {} > $1 ORDER BY {} LIMIT $2",
+                source_config.id_column,
+                source_config.hash_column,
+                timestamp_col,
+                source_config.table_name,
+                source_config.id_column,
+                source_config.id_column
+            )
+        } else {
+            format!(
+                "SELECT {}, {} FROM {} WHERE {} > $1 ORDER BY {} LIMIT $2",
+                source_config.id_column,
+                source_config.hash_column,
+                source_config.table_name,
+                source_config.id_column,
+                source_config.id_column
+            )
+        };
+
+        let rows = txn.query(&query, &[&last_processed, &batch_size]).await?;
+        for row in rows {
+            let source_id: i64 = row.get(0);
+            let leaf_hash: Vec<u8> = row.get(1);
+            let order_timestamp: Option<DateTime<Utc>> = if source_config.timestamp_column.is_some()
+            {
+                row.get(2)
+            } else {
+                None
+            };
+
+            all_source_rows.insert(SourceRow {
+                source_table: source_config.table_name.clone(),
+                source_id,
+                leaf_hash,
+                order_timestamp,
+            });
+        }
+    }
+
+    // BTreeSet automatically maintains sorted order, limit to batch_size after merging
+    let rows_to_insert: Vec<_> = all_source_rows
+        .into_iter()
+        .take(batch_size as usize)
+        .collect();
+
+    Ok(rows_to_insert)
+    
 }
 
 /// Rebuilds all enabled logs from the database on startup

@@ -35,7 +35,7 @@ async fn test_inclusion_proofs() -> Result<()> {
 
     // Get initial log size (may not be 0 if tests ran before)
     let initial_size = client.client.get_log_size("test_log_single_source").await?;
-    println!("📊 Initial log size: {}", initial_size);
+    println!("📊 Initial log size: {initial_size}");
 
     // Add several entries
     let entries = vec!["data1", "data2", "data3", "data4", "data5"];
@@ -53,7 +53,7 @@ async fn test_inclusion_proofs() -> Result<()> {
 
     // Wait until all entries are processed
     let expected_size = initial_size + entries.len() as u64;
-    println!("⏳ Waiting for log to reach size {}...", expected_size);
+    println!("⏳ Waiting for log to reach size {expected_size}...");
     match client
         .wait_until_log_size("test_log_single_source", expected_size)
         .await
@@ -79,15 +79,13 @@ async fn test_inclusion_proofs() -> Result<()> {
         // Verify proof has correct root
         assert_eq!(
             proof.root, root,
-            "Proof root should match current tree root for entry '{}'",
-            entry
+            "Proof root should match current tree root for entry '{entry}'"
         );
 
         // Verify the proof itself
         assert!(
-            proof.verify(hash)?,
-            "Proof verification should succeed for entry '{}'",
-            entry
+            proof.verify(hash).is_ok(),
+            "Proof verification should succeed for entry '{entry}'"
         );
 
         println!(
@@ -133,14 +131,14 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
         .has_leaf("test_log_single_source", "has_test_1")
         .await?;
     assert!(has_leaf1, "has_test_1 should exist in the tree");
-    println!("   ✓ has_test_1 exists: {}", has_leaf1);
+    println!("   ✓ has_test_1 exists: {has_leaf1}");
 
     let has_leaf2 = client
         .client
         .has_leaf("test_log_single_source", "has_test_2")
         .await?;
     assert!(has_leaf2, "has_test_2 should exist in the tree");
-    println!("   ✓ has_test_2 exists: {}", has_leaf2);
+    println!("   ✓ has_test_2 exists: {has_leaf2}");
 
     // Test has_leaf - should not find non-existent entry
     let has_nonexistent = client
@@ -151,7 +149,7 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
         !has_nonexistent,
         "nonexistent_entry should not exist in the tree"
     );
-    println!("   ✓ nonexistent_entry exists: {}", has_nonexistent);
+    println!("   ✓ nonexistent_entry exists: {has_nonexistent}");
 
     // Test has_root - check if initial root exists (if we had one)
     println!("\n🔍 Testing has_root...");
@@ -161,7 +159,7 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
             .has_root("test_log_single_source", old_root.clone())
             .await?;
         assert!(has_old_root, "Old root should exist in root history");
-        println!("   ✓ Old root exists: {}", has_old_root);
+        println!("   ✓ Old root exists: {has_old_root}");
     } else {
         println!("   ⏩ Skipping old root check (started with empty tree)");
     }
@@ -173,7 +171,7 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
         .has_root("test_log_single_source", current_root)
         .await?;
     assert!(has_current_root, "Current root should exist");
-    println!("   ✓ Current root exists: {}", has_current_root);
+    println!("   ✓ Current root exists: {has_current_root}");
 
     // Test has_root - check non-existent root
     let fake_root = vec![9u8; 32];
@@ -182,7 +180,7 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
         .has_root("test_log_single_source", fake_root)
         .await?;
     assert!(!has_fake_root, "Fake root should not exist");
-    println!("   ✓ Fake root exists: {}", has_fake_root);
+    println!("   ✓ Fake root exists: {has_fake_root}");
 
     println!("\n✅ has_leaf and has_root tests complete!");
 
@@ -201,22 +199,22 @@ async fn test_has_log() -> Result<()> {
     println!("\n🔍 Checking existing log...");
     let exists = client.client.has_log("test_log_single_source").await?;
     assert!(exists, "test_log_single_source should exist");
-    println!("   ✓ test_log_single_source exists: {}", exists);
+    println!("   ✓ test_log_single_source exists: {exists}");
 
     let exists_multi = client.client.has_log("test_log_multi_source").await?;
     assert!(exists_multi, "test_log_multi_source should exist");
-    println!("   ✓ test_log_multi_source exists: {}", exists_multi);
+    println!("   ✓ test_log_multi_source exists: {exists_multi}");
 
     // Test 2: Check that a non-existent log returns false
     println!("\n🔍 Checking non-existent log...");
     let nonexistent = client.client.has_log("this_log_does_not_exist").await?;
     assert!(!nonexistent, "this_log_does_not_exist should not exist");
-    println!("   ✓ this_log_does_not_exist exists: {}", nonexistent);
+    println!("   ✓ this_log_does_not_exist exists: {nonexistent}");
 
     // Test 3: Check another non-existent log with different name pattern
     let another_nonexistent = client.client.has_log("fake_log_12345").await?;
     assert!(!another_nonexistent, "fake_log_12345 should not exist");
-    println!("   ✓ fake_log_12345 exists: {}", another_nonexistent);
+    println!("   ✓ fake_log_12345 exists: {another_nonexistent}");
 
     println!("\n✅ has_log tests complete!");
 
@@ -232,7 +230,7 @@ async fn test_consistency_proofs() -> Result<()> {
 
     // Track current size for efficient waiting
     let mut current_size = client.client.get_log_size("test_log_single_source").await?;
-    println!("📊 Initial log size: {}", current_size);
+    println!("📊 Initial log size: {current_size}");
 
     // Add entries and store intermediate roots
     for i in 0..3 {
@@ -317,10 +315,10 @@ async fn test_burst_operations() -> Result<()> {
 
     // Get initial log size
     let initial_size = client.client.get_log_size("test_log_single_source").await?;
-    println!("📊 Initial log size: {}", initial_size);
+    println!("📊 Initial log size: {initial_size}");
 
     // Create a batch of entries and calculate their hashes
-    let entries: Vec<String> = (1..=10).map(|i| format!("burst-entry-{}", i)).collect();
+    let entries: Vec<String> = (1..=10).map(|i| format!("burst-entry-{i}")).collect();
 
     let mut hashes = Vec::new();
 
@@ -338,7 +336,7 @@ async fn test_burst_operations() -> Result<()> {
 
     // Wait until all entries are processed
     let expected_size = initial_size + entries.len() as u64;
-    println!("⏳ Waiting for log to reach size {}...", expected_size);
+    println!("⏳ Waiting for log to reach size {expected_size}...");
     client
         .wait_until_log_size("test_log_single_source", expected_size)
         .await?;
@@ -358,13 +356,11 @@ async fn test_burst_operations() -> Result<()> {
             .await?;
         assert_eq!(
             root, proof.root,
-            "Merkle root mismatch for entry: {}",
-            entry
+            "Merkle root mismatch for entry: {entry}"
         );
         assert!(
-            proof.verify(hash)?,
-            "Proof verification failed for entry: {}",
-            entry
+            proof.verify(hash).is_ok(),
+            "Proof verification failed for entry: {entry}"
         );
         println!("✅ Verified proof for '{}' at index {}", entry, proof.index);
     }
@@ -383,11 +379,10 @@ async fn test_large_batch_performance() -> Result<()> {
 
     // Get initial log size
     let initial_size = client.client.get_log_size("test_log_single_source").await?;
-    println!("📊 Initial log size: {}", initial_size);
+    println!("📊 Initial log size: {initial_size}");
 
     println!(
-        "🔥 Starting performance test with {} entries...",
-        num_entries
+        "🔥 Starting performance test with {num_entries} entries..."
     );
 
     // Add entries in chunks to avoid overwhelming the system
@@ -396,14 +391,14 @@ async fn test_large_batch_performance() -> Result<()> {
 
     for chunk_start in (0..num_entries).step_by(chunk_size) {
         let chunk_end = (chunk_start + chunk_size).min(num_entries);
-        println!("📦 Adding entries {}-{}", chunk_start, chunk_end);
+        println!("📦 Adding entries {chunk_start}-{chunk_end}");
 
         let chunk_start_time = std::time::Instant::now();
         let mut chunk_hashes = Vec::with_capacity(chunk_size);
 
         // Add entries and calculate hashes in this chunk
         for i in chunk_start..chunk_end {
-            let entry = format!("perf-entry-{}", i);
+            let entry = format!("perf-entry-{i}");
 
             // Calculate hash
             let mut hasher = Sha256::new();
@@ -421,7 +416,7 @@ async fn test_large_batch_performance() -> Result<()> {
         all_hashes.extend(chunk_hashes);
 
         let chunk_duration = chunk_start_time.elapsed();
-        println!("  ⏱️ Chunk insert time: {:?}", chunk_duration);
+        println!("  ⏱️ Chunk insert time: {chunk_duration:?}");
         println!(
             "  📊 Average insert time: {:?} per entry",
             chunk_duration / chunk_size as u32
@@ -430,7 +425,7 @@ async fn test_large_batch_performance() -> Result<()> {
 
     // Wait for final processing and get root
     let expected_size = initial_size + num_entries as u64;
-    println!("\n⏳ Waiting for log to reach size {}...", expected_size);
+    println!("\n⏳ Waiting for log to reach size {expected_size}...");
     client
         .wait_until_log_size("test_log_single_source", expected_size)
         .await?;
@@ -462,11 +457,10 @@ async fn test_large_batch_performance() -> Result<()> {
             .get_inclusion_proof("test_log_single_source", entry)
             .await?;
         assert!(
-            proof.verify(hash)?,
-            "Proof verification failed for entry: {}",
-            entry
+            proof.verify(hash).is_ok(),
+            "Proof verification failed for entry: {entry}"
         );
-        println!("✅ Verified entry at index {}", idx);
+        println!("✅ Verified entry at index {idx}");
     }
 
     Ok(())
@@ -481,7 +475,7 @@ async fn test_source_log_setup() -> Result<()> {
 
     // Get initial size
     let initial_size = client.client.get_log_size("test_log_multi_source").await?;
-    println!("📊 Initial log size: {}", initial_size);
+    println!("📊 Initial log size: {initial_size}");
 
     // Add entries to all three sources with interleaved timing
     println!("\n📝 Adding entries to multiple sources...");
@@ -504,7 +498,7 @@ async fn test_source_log_setup() -> Result<()> {
 
     // Wait for batch processor to process all entries
     let expected_size = initial_size + 5;
-    println!("\n⏳ Waiting for log to reach size {}...", expected_size);
+    println!("\n⏳ Waiting for log to reach size {expected_size}...");
     client
         .wait_until_log_size("test_log_multi_source", expected_size)
         .await?;
@@ -521,9 +515,7 @@ async fn test_source_log_setup() -> Result<()> {
         let curr_id: i64 = rows.get(i).expect("curr row exists").get(2);
         assert!(
             curr_id > prev_id,
-            "Merkle log IDs should be strictly increasing: {} should be > {}",
-            curr_id,
-            prev_id
+            "Merkle log IDs should be strictly increasing: {curr_id} should be > {prev_id}"
         );
     }
 
@@ -552,41 +544,40 @@ async fn test_universal_ordering() -> Result<()> {
 
     // Get initial log size
     let initial_size = client.client.get_log_size("test_log_multi_source").await?;
-    println!("📊 Initial log size: {}", initial_size);
+    println!("📊 Initial log size: {initial_size}");
 
     // Insert entries sequentially - timestamped sources will get increasing timestamps automatically
     println!("\n📝 Inserting entries into timestamped sources:");
 
     let id1 = client.add_entry_to_source("source_log", "entry_t1").await?;
-    println!("  ✓ source_log id={} (timestamped)", id1);
+    println!("  ✓ source_log id={id1} (timestamped)");
 
     let id2 = client
         .add_entry_to_source("test_source_a", "entry_t2")
         .await?;
-    println!("  ✓ test_source_a id={} (timestamped)", id2);
+    println!("  ✓ test_source_a id={id2} (timestamped)");
 
     let id3 = client
         .add_entry_to_source("test_source_b", "entry_t3")
         .await?;
-    println!("  ✓ test_source_b id={} (timestamped)", id3);
+    println!("  ✓ test_source_b id={id3} (timestamped)");
 
     println!("\n📝 Inserting entries into non-timestamped source:");
 
     let id4 = client
         .add_entry_to_source("source_no_timestamp", "entry_no_ts_1")
         .await?;
-    println!("  ✓ source_no_timestamp id={} (no timestamp)", id4);
+    println!("  ✓ source_no_timestamp id={id4} (no timestamp)");
 
     let id5 = client
         .add_entry_to_source("source_no_timestamp", "entry_no_ts_2")
         .await?;
-    println!("  ✓ source_no_timestamp id={} (no timestamp)", id5);
+    println!("  ✓ source_no_timestamp id={id5} (no timestamp)");
 
     // Step 3: Wait for processing
     let expected_size = initial_size + 5;
     println!(
-        "\n⏳ Waiting for {} entries to be processed...",
-        expected_size
+        "\n⏳ Waiting for {expected_size} entries to be processed..."
     );
     client
         .wait_until_log_size("test_log_multi_source", expected_size)
@@ -669,9 +660,7 @@ async fn test_universal_ordering() -> Result<()> {
     // Constraint 3: Non-timestamped entries are ordered by id (same table)
     assert!(
         proof4.index < proof5.index,
-        "Lower id ({}) should come before higher id ({}) in same table",
-        id4,
-        id5
+        "Lower id ({id4}) should come before higher id ({id5}) in same table"
     );
     println!("  ✓ Non-timestamped entries maintain id order within same table");
 
@@ -689,8 +678,7 @@ async fn test_universal_ordering() -> Result<()> {
 
     assert_eq!(
         sorted_indices, expected_indices,
-        "Indices should be consecutive starting from {}",
-        initial_size
+        "Indices should be consecutive starting from {initial_size}"
     );
     println!("  ✓ All indices are consecutive with no gaps");
 
@@ -712,7 +700,7 @@ async fn test_no_timestamp_ordering() -> Result<()> {
 
     // Get initial log size
     let initial_size = client.client.get_log_size("test_log_no_timestamp").await? as u64;
-    println!("📊 Initial log size: {}", initial_size);
+    println!("📊 Initial log size: {initial_size}");
 
     // Insert entries with specific ids to test ordering
     // We'll insert in a non-sequential order to verify the processor sorts correctly
@@ -722,31 +710,30 @@ async fn test_no_timestamp_ordering() -> Result<()> {
     let id1 = client
         .add_entry_to_source("source_no_timestamp_b", "entry_b_1")
         .await?;
-    println!("  ✓ source_no_timestamp_b id={}", id1);
+    println!("  ✓ source_no_timestamp_b id={id1}");
 
     // Insert into source_no_timestamp with lower id
     let id2 = client
         .add_entry_to_source("source_no_timestamp", "entry_a_1")
         .await?;
-    println!("  ✓ source_no_timestamp id={}", id2);
+    println!("  ✓ source_no_timestamp id={id2}");
 
     // Insert another into source_no_timestamp_b
     let id3 = client
         .add_entry_to_source("source_no_timestamp_b", "entry_b_2")
         .await?;
-    println!("  ✓ source_no_timestamp_b id={}", id3);
+    println!("  ✓ source_no_timestamp_b id={id3}");
 
     // Insert another into source_no_timestamp
     let id4 = client
         .add_entry_to_source("source_no_timestamp", "entry_a_2")
         .await?;
-    println!("  ✓ source_no_timestamp id={}", id4);
+    println!("  ✓ source_no_timestamp id={id4}");
 
     // Wait for processing
     let expected_size = initial_size + 4;
     println!(
-        "\n⏳ Waiting for {} entries to be processed...",
-        expected_size
+        "\n⏳ Waiting for {expected_size} entries to be processed..."
     );
     client
         .wait_until_log_size("test_log_no_timestamp", expected_size)
@@ -816,8 +803,7 @@ async fn test_no_timestamp_ordering() -> Result<()> {
         let expected_index = initial_size + i as u64;
         assert_eq!(
             *actual_index, expected_index,
-            "Entry {}:{} should be at index {} but is at {}",
-            table, id, expected_index, actual_index
+            "Entry {table}:{id} should be at index {expected_index} but is at {actual_index}"
         );
     }
     println!("  ✓ All entries are in correct (id, table_name) order");
@@ -830,8 +816,7 @@ async fn test_no_timestamp_ordering() -> Result<()> {
     let expected_indices: Vec<u64> = (initial_size..initial_size + 4).collect();
     assert_eq!(
         sorted_indices, expected_indices,
-        "Indices should be consecutive starting from {}",
-        initial_size
+        "Indices should be consecutive starting from {initial_size}"
     );
     println!("  ✓ All indices are consecutive with no gaps");
 

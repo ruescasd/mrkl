@@ -39,9 +39,9 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        let program_name = args.first().map(|s| s.as_str()).unwrap_or("monitor");
-        eprintln!("Usage: {} <log_name>", program_name);
-        eprintln!("\nExample: {} example_post_log", program_name);
+        let program_name = args.first().map(String::as_str).unwrap_or("monitor");
+        eprintln!("Usage: {program_name} <log_name>");
+        eprintln!("\nExample: {program_name} example_post_log");
         std::process::exit(1);
     }
 
@@ -55,9 +55,9 @@ async fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
 
-    println!("📡 Monitoring log: {}", log_name);
-    println!("🔗 Server: {}", server_url);
-    println!("⏱️  Poll interval: {}s", poll_interval_secs);
+    println!("📡 Monitoring log: {log_name}");
+    println!("🔗 Server: {server_url}");
+    println!("⏱️  Poll interval: {poll_interval_secs}s");
     println!();
 
     // Create client
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
             s
         }
         Err(e) => {
-            eprintln!("❌ Failed to fetch initial state: {}", e);
+            eprintln!("❌ Failed to fetch initial state: {e}");
             eprintln!("   Make sure the log exists and the server is running.");
             std::process::exit(1);
         }
@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
                             println!("   ❌ CONSISTENCY VERIFICATION FAILED!");
                         }
                         Err(e) => {
-                            println!("   ⚠️  Error verifying consistency: {}", e);
+                            println!("   ⚠️  Error verifying consistency: {e}");
                         }
                     }
 
@@ -118,8 +118,7 @@ async fn main() -> Result<()> {
                     state = new_state;
                 } else if new_state.root != state.root {
                     println!(
-                        "⚠️  [Check #{}] Root changed but size unchanged! (Possible issue)",
-                        check_count
+                        "⚠️  [Check #{check_count}] Root changed but size unchanged! (Possible issue)"
                     );
                     print_state(&new_state);
                     println!();
@@ -133,7 +132,7 @@ async fn main() -> Result<()> {
                 }
             }
             Err(e) => {
-                println!("⚠️  [Check #{}] Failed to fetch state: {}", check_count, e);
+                println!("⚠️  [Check #{check_count}] Failed to fetch state: {e}");
             }
         }
     }

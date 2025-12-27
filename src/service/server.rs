@@ -125,7 +125,7 @@ pub async fn run_server(app_state: AppState) -> Result<()> {
         }
         result = processor => {
             match result {
-                Ok(_) => tracing::info!("Processor completed successfully"),
+                Ok(()) => tracing::info!("Processor completed successfully"),
                 Err(e) => tracing::error!(error = ?e, "Processor error"),
             }
         }
