@@ -12,16 +12,18 @@
 //!
 //! Example:
 //!   cargo run --example monitor -- example_post_log
-#![allow(clippy::missing_docs_in_private_items)]
 
 use anyhow::Result;
 use base64::Engine;
 use mrkl::service::Client;
 use std::time::Duration;
 
+/// Represents a snapshot of a merkle log's state at a point in time.
 #[derive(Debug)]
 struct LogState {
+    /// The size of the merkle tree (number of leaves).
     size: u64,
+    /// The root hash of the merkle tree.
     root: Vec<u8>,
 }
 
@@ -187,6 +189,7 @@ fn print_state(state: &LogState) {
     }
 }
 
+/// Returns the minimum of two values.
 fn min(a: usize, b: usize) -> usize {
     if a < b { a } else { b }
 }

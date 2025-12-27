@@ -9,7 +9,6 @@
 //!
 //! Usage:
 //!   cargo run --example post
-#![allow(clippy::missing_docs_in_private_items)]
 
 use anyhow::Result;
 use base64::Engine;
@@ -18,7 +17,9 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio_postgres::NoTls;
 
+/// The name of the merkle log used in this example.
 const LOG_NAME: &str = "example_post_log";
+/// The name of the source table used in this example.
 const SOURCE_TABLE: &str = "example_post_source";
 
 #[tokio::main]

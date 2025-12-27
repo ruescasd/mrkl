@@ -20,6 +20,11 @@ pub struct TestClient {
 impl TestClient {
     /// Creates a new test client with both HTTP and database access
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client cannot be created or if the database
+    /// connection cannot be established.
+    ///
     /// # Panics
     /// 
     /// Panics if DATABASE_URL is not set in the environment.
@@ -45,6 +50,10 @@ impl TestClient {
 
     /// Idempotently sets up test environment with logs and sources
     /// This can be called multiple times safely - does nothing if already configured
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if database operations fail.
     pub async fn setup_test_environment(&self) -> Result<()> {
         // Define our test logs
         // Format: (log_name, description, [(source_table, has_timestamp)])
@@ -148,6 +157,10 @@ impl TestClient {
     // ===== Database Insertion Utilities =====
 
     /// Adds a new entry to the source_log table
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database insert fails.
     pub async fn add_entry(&self, data: &str) -> Result<i64> {
         let mut hasher = Sha256::new();
         hasher.update(data.as_bytes());
@@ -165,6 +178,10 @@ impl TestClient {
     }
 
     /// Adds an entry to a specified source table
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database insert fails.
     pub async fn add_entry_to_source(&self, table_name: &str, data: &str) -> Result<i64> {
         let mut hasher = Sha256::new();
         hasher.update(data.as_bytes());
@@ -187,6 +204,10 @@ impl TestClient {
     // ===== Test Assertion Utilities =====
 
     /// Gets all sources from merkle_log for a given log
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub async fn get_sources(&self, log_name: &str) -> Result<Vec<tokio_postgres::Row>> {
         let result = self.db_client
             .query(
@@ -199,6 +220,10 @@ impl TestClient {
     }
 
     /// Diagnostic: Show recent entries for debugging
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub async fn show_recent_entries(&self, count: i64) -> Result<()> {
         let rows = self.db_client
             .query(
@@ -227,6 +252,11 @@ impl TestClient {
     /// Waits until the log reaches the expected size by polling the size endpoint
     /// This is much more efficient than fixed-duration sleeps
     /// STRICT: Returns error if size exceeds expected (indicates entries from elsewhere)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the log size exceeds the expected
+    /// size, or if the timeout is reached.
     pub async fn wait_until_log_size(&self, log_name: &str, expected_size: u64) -> Result<()> {
         let start_time = std::time::Instant::now();
         let timeout = Duration::from_secs(30); // Maximum wait time

@@ -21,47 +21,73 @@ use std::collections::HashMap;
 use std::io::{Write, stdout};
 use std::time::Duration;
 
+/// Response from the metrics API endpoint.
 #[derive(Debug, Deserialize)]
 struct MetricsResponse {
+    /// Per-log metrics, keyed by log name.
     logs: HashMap<String, LogMetrics>,
+    /// Global system metrics.
     global: GlobalMetrics,
 }
 
+/// Metrics for a single log.
 #[derive(Debug, Deserialize)]
 struct LogMetrics {
+    /// Number of rows processed in the last batch.
     last_batch_rows: u64,
+    /// Number of leaves added to the tree in the last batch.
     last_batch_leaves: u64,
+    /// Total duration of the last batch in milliseconds.
     last_total_ms: u64,
+    /// Duration of the copy operation in the last batch in milliseconds.
     last_copy_ms: u64,
+    /// Duration of querying sources in the last batch in milliseconds.
     last_query_sources_ms: u64,
+    /// Duration of inserting into merkle_log in the last batch in milliseconds.
     last_insert_merkle_log_ms: u64,
+    /// Duration of fetching from merkle_log in the last batch in milliseconds.
     last_fetch_merkle_log_ms: u64,
+    /// Duration of updating the tree in the last batch in milliseconds.
     last_tree_update_ms: u64,
+    /// Current size of the merkle tree (number of leaves).
     tree_size: u64,
+    /// Memory usage of the tree in bytes.
     tree_memory_bytes: u64,
+    /// Timestamp of the last update.
     last_update: String,
 }
 
+/// Global system metrics.
 #[derive(Debug, Deserialize)]
 struct GlobalMetrics {
+    /// Duration of the last processor cycle in milliseconds.
     last_cycle_duration_ms: u64,
+    /// Number of logs that had data to process in the last cycle.
     last_active_log_count: usize,
+    /// Fraction of time spent processing vs sleeping in the last cycle.
     last_cycle_fraction: f64,
 }
 
+/// Response from the API, tagged by success status.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 enum ApiResponse {
+    /// Successful response with metrics data.
     #[serde(rename = "ok")]
     Ok {
+        /// Per-log metrics.
         logs: HashMap<String, LogMetrics>,
+        /// Global system metrics.
         global: GlobalMetrics,
     },
+    /// Error response.
     Error {
+        /// Error message.
         error: String,
     },
 }
 
+/// Fetches metrics from the API endpoint.
 async fn fetch_metrics(url: &str) -> Result<MetricsResponse> {
     let response = reqwest::get(url).await?;
     let text = response.text().await?;
@@ -77,6 +103,7 @@ async fn fetch_metrics(url: &str) -> Result<MetricsResponse> {
     }
 }
 
+/// Formats a number with K/M suffixes for readability.
 fn format_number(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
@@ -87,6 +114,7 @@ fn format_number(n: u64) -> String {
     }
 }
 
+/// Formats bytes as KB/MB/GB for readability.
 fn format_memory(bytes: u64) -> String {
     if bytes >= 1_073_741_824 {
         format!("{:.1}GB", bytes as f64 / 1_073_741_824.0)
@@ -99,6 +127,7 @@ fn format_memory(bytes: u64) -> String {
     }
 }
 
+/// Displays metrics in the terminal.
 fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
     let mut stdout = stdout();
 
