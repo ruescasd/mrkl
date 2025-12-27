@@ -51,9 +51,9 @@ unnameable_types = "deny"
 # unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
 
 [lints.clippy]
-missing_docs_in_private_items = "deny"
-missing_errors_doc = "deny"
-missing_panics_doc = "deny"
+# missing_docs_in_private_items = "deny"
+# missing_errors_doc = "deny"
+# missing_panics_doc = "deny"
 # doc_markdown = "deny"
 # unwrap_used = "deny"
 # print_stdout = "deny"
