@@ -132,8 +132,17 @@ impl SourceConfig {
     }
 }
 
-/// Runs the batch processing loop that moves entries from source tables to `merkle_log`
-/// and updates the merkle tree state for each log
+/// Batch processor entry point
+/// 
+/// Runs the batch processing loop that 
+/// 1) Retrieves enabled logs
+/// 2) Processes each log (`process_log`)
+/// 3) Updates global metrics
+/// 
+/// This loop runs until the processor state is set to Stopping via an admin endpoint.
+/// 
+/// Note: each log is processed serially, but errors are independently handled: an error 
+/// in one log does not affect others.
 #[allow(clippy::cognitive_complexity)]
 pub async fn run_batch_processor(app_state: AppState) {
     let batch_size: u32 = 10000;
@@ -210,6 +219,16 @@ pub async fn run_batch_processor(app_state: AppState) {
 }
 
 /// Process a single log: copy rows from source tables to `merkle_log` and update tree
+/// 
+/// This function
+/// 1) Ensures merkle state exists for the log
+/// 2) Copies pending entries from source tables into `merkle_log`
+/// 3) Fetches new entries from `merkle_log` and updates the merkle tree
+/// 4) Updates metrics for the log
+/// 
+/// Note: a log's merkle tree is not updated unless the entries have been successfully persisted
+/// to `merkle_log`, ensuring that published log information can always be reconstructed
+/// from persisted data.
 async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> Result<()> {
     // Time the entire processing cycle
     let total_start = std::time::Instant::now();
@@ -235,11 +254,9 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
     let copy_start = std::time::Instant::now();
 
     // Copy pending entries into merkle_log
-    let batch_result = copy_source_rows(app_state, log_name, batch_size).await;
+    let batch_stats = copy_source_rows(app_state, log_name, batch_size).await?;
 
     let copy_duration = copy_start.elapsed();
-
-    let batch_stats = batch_result?;
 
     if batch_stats.rows_copied > 0 {
         // Time the retrieval from merkle_log
@@ -273,14 +290,10 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
             let hash: Vec<u8> = row.get("leaf_hash");
             let leaf_hash = LeafHash::new(hash);
 
-            // Update tree and ID atomically
+            // we must checkpoint after each addition, because in a rebuild 
+            // scenario we do not know which roots have been published
             merkle_state.update_with_entry(leaf_hash, id);
         }
-        // for the moment we must checkpoint after each addition,
-        // because in a rebuild scenario we do not know which roots have been published
-        // these checkpoints are currently part of update_with_entry
-        // merkle_state.root_checkpoint();
-
         let tree_duration = tree_start.elapsed();
 
         // Update metrics for this log
@@ -306,7 +319,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
                 );
             });
     } else {
-        // Update metrics even when no rows copied (caught up)
+        // Update metrics even when no rows copied (catching up)
         let tree_size = merkle_state_arc.read().tree.len();
         let total_duration = total_start.elapsed();
 
@@ -331,11 +344,19 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
 }
 
 /// When using bulk inserts, we process in chunks to avoid postgresql parameter limit 
-/// (~32K (probably 32,767) parameters = ~6.5K rows × 5 params)
+/// This limit is ~32K (probably 32,767) parameters (= ~6.5K rows × 5 params)
 /// 1000 rows × 5 params = 5000 parameters (well under limit)
 const CHUNK_SIZE: usize = 1000;
 
 /// Process a batch of rows from configured source tables into `merkle_log` for a specific log
+/// 
+/// This function
+/// 
+/// 1) Loads source configurations for the log
+/// 2) Validates that source tables exist
+/// 3) Queries pending rows from source tables up to `batch_size` total
+/// 4) Inserts the rows into `merkle_log` with globally unique IDs
+/// 
 /// Returns statistics about the batch processing operation
 #[allow(clippy::cognitive_complexity)]
 async fn copy_source_rows(
@@ -359,7 +380,7 @@ async fn copy_source_rows(
     }
 
     // Filter to only tables that actually exist (skip missing tables with warning)
-    let valid_configs = validate_source_tables(&conn, &source_configs).await?;
+    let valid_configs = get_valid_source_tables(&conn, &source_configs).await?;
 
     // If no valid sources after filtering, nothing to do
     if valid_configs.is_empty() {
@@ -373,7 +394,9 @@ async fn copy_source_rows(
     // Start transaction
     let txn = conn.transaction().await?;
 
-    // Advisory lock prevents concurrent execution for this specific log
+    // Advisory lock prevents concurrent execution for this specific log.
+    // In the current implementation this is not strictly necessary but
+    // protects against future changes that might process logs in parallel.
     // Use log name to generate unique lock ID
     let lock_id = hash_string_to_i64(log_name);
     let lock_acquired: bool = txn
@@ -478,6 +501,11 @@ async fn copy_source_rows(
 }
 
 /// Retrieves rows from all valid source tables for a specific log, up to `batch_size` total
+/// 
+/// Pending rows to retrieve are those with `source_id` greater than the last processed `source_id`
+/// for each source table in the merkle log table.
+/// 
+/// Returns up to `batch_size` * 2 - 1 total `SourceRow`s
 async fn get_source_rows(txn: &Transaction<'_>, valid_configs: Vec<SourceConfig>, log_name: &str, batch_size: u32) -> Result<Vec<SourceRow>> {
 
     // Collect rows from all configured source tables into a BTreeSet for automatic sorting
@@ -515,7 +543,7 @@ async fn get_source_rows(txn: &Transaction<'_>, valid_configs: Vec<SourceConfig>
             )
         };
 
-        let rows = txn.query(&query, &[&last_processed, &(batch_size as i64)]).await?;
+        let rows = txn.query(&query, &[&last_processed, &(i64::from(batch_size) )]).await?;
         for row in rows {
             let source_id: i64 = row.get(0);
             let leaf_hash: Vec<u8> = row.get(1);
@@ -611,6 +639,9 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
 }
 
 /// Rebuilds a single log's merkle tree from the database
+/// 
+/// The log will be reconstructed from all entries in the merkle log table 
+/// for the specified log name, and placed into the in-memory merkle state map.
 async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
     let conn = app_state.db_pool.get().await?;
 
@@ -634,12 +665,10 @@ async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
         let id: i64 = row.get(0);
         let hash: Vec<u8> = row.get(1);
         let leaf_hash = LeafHash::new(hash);
+        // we must checkpoint after each addition, because in a rebuild 
+        // scenario we do not know which roots have been published
         merkle_state.update_with_entry(leaf_hash, id);
     }
-    // for the moment we must checkpoint after each addition,
-    // because in a rebuild scenario we do not know which roots have been published
-    // these checkpoints are currently part of update_with_entry
-    // merkle_state.root_checkpoint();
 
     // Store in DashMap
     let merkle_state_arc = std::sync::Arc::new(parking_lot::RwLock::new(merkle_state));
@@ -656,6 +685,8 @@ async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
 }
 
 /// Load enabled log names from `verification_logs` table
+/// 
+/// A log is enabled if its 'enabled' column is true
 async fn load_enabled_logs(conn: &PooledConnection) -> Result<Vec<String>> {
     let rows = conn
         .query(
@@ -667,13 +698,15 @@ async fn load_enabled_logs(conn: &PooledConnection) -> Result<Vec<String>> {
     let log_names: Vec<String> = rows.iter().map(|row| row.get(0)).collect();
 
     if !log_names.is_empty() {
-        // println!("📋 Loaded {} enabled log(s)", log_names.len());
+        // tracing::info!("📋 Loaded {} enabled log(s)", log_names.len());
     }
 
     Ok(log_names)
 }
 
 /// Load enabled source configurations from `verification_sources` table for a specific log
+/// 
+/// A source is enabled if its 'enabled' column is true
 async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<Vec<SourceConfig>> {
     let rows = conn
         .query(
@@ -708,9 +741,10 @@ async fn load_source_configs(conn: &PooledConnection, log_name: &str) -> Result<
     Ok(configs)
 }
 
-/// Validate that all configured source tables exist
 /// Returns only the configs for tables that actually exist
-async fn validate_source_tables(
+/// 
+/// Determines if a table exists by querying the database's information schema
+async fn get_valid_source_tables(
     conn: &PooledConnection,
     configs: &[SourceConfig],
 ) -> Result<Vec<SourceConfig>> {
@@ -747,6 +781,8 @@ fn hash_string_to_i64(s: &str) -> i64 {
 }
 
 /// Safely converts u128 milliseconds to u64, capping at `u64::MAX`
+/// 
+/// This is used for timing metrics where u64 is expected.
 fn u64_millis(millis: u128) -> u64 {
     if millis > u128::from(u64::MAX) {
         u64::MAX
