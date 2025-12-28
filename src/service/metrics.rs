@@ -161,6 +161,7 @@ impl GlobalMetrics {
     }
 
     /// Update metrics after a processing cycle
+    #[allow(clippy::cast_precision_loss)]
     pub fn record_cycle(
         &mut self,
         cycle_duration_ms: u64,

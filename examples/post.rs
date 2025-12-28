@@ -9,6 +9,7 @@
 //!
 //! Usage:
 //!   cargo run --example post
+#![allow(clippy::pedantic)]
 #![allow(clippy::print_stdout)]
 #![allow(clippy::print_stderr)]
 

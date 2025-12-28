@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
 
         // Exit with status code based on validation result
         let all_valid = validations.iter().all(mrkl::service::LogValidation::is_valid);
-        std::process::exit(if all_valid { 0 } else { 1 });
+        std::process::exit(i32::from(!all_valid));
     }
 
     // Run the complete server with batch processing

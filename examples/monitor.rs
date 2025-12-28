@@ -12,6 +12,7 @@
 //!
 //! Example:
 //!   cargo run --example monitor -- `example_post_log`
+#![allow(clippy::pedantic)]
 #![allow(clippy::print_stdout)]
 #![allow(clippy::print_stderr)]
 #![allow(clippy::arithmetic_side_effects)]

@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use deadpool_postgres::{Object as PooledConnection, Transaction};
 use std::collections::{BTreeSet, hash_map::DefaultHasher};
+use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 
 use crate::LeafHash;
@@ -135,7 +136,7 @@ impl SourceConfig {
 /// and updates the merkle tree state for each log
 #[allow(clippy::cognitive_complexity)]
 pub async fn run_batch_processor(app_state: AppState) {
-    let batch_size: i64 = 10000;
+    let batch_size: u32 = 10000;
     let interval = std::time::Duration::from_secs(1);
 
     loop {
@@ -198,7 +199,7 @@ pub async fn run_batch_processor(app_state: AppState) {
 
         // Update global metrics
         app_state.metrics.update_global_metrics(|global| {
-            global.record_cycle(elapsed.as_millis() as u64, log_names.len(), &interval);
+            global.record_cycle(u64_millis(elapsed.as_millis()), log_names.len(), &interval);
         });
 
         // Wait for next interval
@@ -209,7 +210,7 @@ pub async fn run_batch_processor(app_state: AppState) {
 }
 
 /// Process a single log: copy rows from source tables to `merkle_log` and update tree
-async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> Result<()> {
+async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> Result<()> {
     // Time the entire processing cycle
     let total_start = std::time::Instant::now();
 
@@ -295,12 +296,12 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
                 log_metrics.record_batch(
                     batch_stats.rows_copied as u64,
                     leaves_added as u64,
-                    total_duration.as_millis() as u64,
-                    copy_duration.as_millis() as u64,
+                    u64_millis(total_duration.as_millis()),
+                    u64_millis(copy_duration.as_millis()),
                     batch_stats.query_sources_ms,
                     batch_stats.insert_merkle_log_ms,
-                    fetch_duration.as_millis() as u64,
-                    tree_duration.as_millis() as u64,
+                    u64_millis(fetch_duration.as_millis()),
+                    u64_millis(tree_duration.as_millis()),
                     final_tree_size,
                 );
             });
@@ -315,8 +316,8 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: i64) -> R
                 log_metrics.record_batch(
                     0,
                     0,
-                    total_duration.as_millis() as u64,
-                    copy_duration.as_millis() as u64,
+                    u64_millis(total_duration.as_millis()),
+                    u64_millis(copy_duration.as_millis()),
                     0,
                     0,
                     0,
@@ -340,7 +341,7 @@ const CHUNK_SIZE: usize = 1000;
 async fn copy_source_rows(
     app_state: &AppState,
     log_name: &str,
-    batch_size: i64,
+    batch_size: u32,
 ) -> Result<BatchStats> {
     // Get connection from pool
     let mut conn = app_state.db_pool.get().await?;
@@ -422,22 +423,28 @@ async fn copy_source_rows(
                 let base = offset * 5;
                 // CHUNK_SIZE * 5 << usize::MAX
                 #[allow(clippy::arithmetic_side_effects)]
-                query.push_str(&format!(
-                    "(${}, ${}, ${}, ${}, ${})",
-                    base + 1,
-                    base + 2,
-                    base + 3,
-                    base + 4,
-                    base + 5
-                ));
+                {
+                    let _ = write!(
+                        &mut query,
+                        "(${}, ${}, ${}, ${}, ${})",
+                        base + 1,
+                        base + 2,
+                        base + 3,
+                        base + 4,
+                        base + 5
+                    );
+                }
             }
 
             // Flatten parameters for this chunk: for each row, add (id, log_name, source_table, source_id, leaf_hash)
             let mut param_values: Vec<(i64, &str, &str, i64, &[u8])> = Vec::new();
             for (offset, source_row) in chunk.iter().enumerate() {
+                // (<< u64::MAX) + usize::MAX << u64::MAX
+                #[allow(clippy::arithmetic_side_effects)]
+                let all_offset = (chunk_offset + offset as u64).cast_signed();
                 // the total number of log entries will never approach i64::MAX in practice
                 #[allow(clippy::arithmetic_side_effects)]
-                let merkle_id = next_id + (chunk_offset + offset as u64) as i64;
+                let merkle_id = next_id + all_offset;
                 param_values.push((
                     merkle_id,
                     log_name,
@@ -465,13 +472,13 @@ async fn copy_source_rows(
 
     Ok(BatchStats {
         rows_copied: rows_to_insert.len() as u64,
-        query_sources_ms: query_duration.as_millis() as u64,
-        insert_merkle_log_ms: insert_duration.as_millis() as u64,
+        query_sources_ms: u64_millis(query_duration.as_millis()),
+        insert_merkle_log_ms: u64_millis(insert_duration.as_millis()),
     })
 }
 
 /// Retrieves rows from all valid source tables for a specific log, up to `batch_size` total
-async fn get_source_rows(txn: &Transaction<'_>, valid_configs: Vec<SourceConfig>, log_name: &str, batch_size: i64) -> Result<Vec<SourceRow>> {
+async fn get_source_rows(txn: &Transaction<'_>, valid_configs: Vec<SourceConfig>, log_name: &str, batch_size: u32) -> Result<Vec<SourceRow>> {
 
     // Collect rows from all configured source tables into a BTreeSet for automatic sorting
     let mut all_source_rows = BTreeSet::new();
@@ -508,7 +515,7 @@ async fn get_source_rows(txn: &Transaction<'_>, valid_configs: Vec<SourceConfig>
             )
         };
 
-        let rows = txn.query(&query, &[&last_processed, &batch_size]).await?;
+        let rows = txn.query(&query, &[&last_processed, &(batch_size as i64)]).await?;
         for row in rows {
             let source_id: i64 = row.get(0);
             let leaf_hash: Vec<u8> = row.get(1);
@@ -526,13 +533,16 @@ async fn get_source_rows(txn: &Transaction<'_>, valid_configs: Vec<SourceConfig>
                 order_timestamp,
             });
         }
+
+        // Stop querying once we have enough rows to avoid unnecessary database queries
+        // Worst case: we process up to (batch_size * 2 - 1) rows, which is acceptable
+        if all_source_rows.len() >= batch_size as usize {
+            break;
+        }
     }
 
-    // BTreeSet automatically maintains sorted order, limit to batch_size after merging
-    let rows_to_insert: Vec<_> = all_source_rows
-        .into_iter()
-        .take(batch_size as usize)
-        .collect();
+    // BTreeSet automatically maintains sorted order, convert to Vec
+    let rows_to_insert = Vec::from_iter(all_source_rows);
 
     Ok(rows_to_insert)
     
@@ -733,5 +743,14 @@ async fn validate_source_tables(
 fn hash_string_to_i64(s: &str) -> i64 {
     let mut hasher = DefaultHasher::new();
     s.hash(&mut hasher);
-    hasher.finish() as i64
+    hasher.finish().cast_signed()
+}
+
+/// Safely converts u128 milliseconds to u64, capping at `u64::MAX`
+fn u64_millis(millis: u128) -> u64 {
+    if millis > u128::from(u64::MAX) {
+        u64::MAX
+    } else {
+        u64::try_from(millis).expect("millis <= u64::MAX")
+    }
 }

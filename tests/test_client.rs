@@ -2,6 +2,7 @@
 //!
 //! Tests the Client API for interacting with the mrkl server, including
 //! proof requests, verification, and error handling.
+#![allow(clippy::pedantic)]
 #![allow(clippy::print_stdout)]
 #![allow(clippy::print_stderr)]
 #![allow(clippy::arithmetic_side_effects)]

@@ -5,6 +5,7 @@
 //! sequentially since they share database state.
 //!
 //! Run with: `cargo test --test basic -- --include-ignored --nocapture`
+#![allow(clippy::pedantic)]
 #![allow(clippy::print_stdout)]
 #![allow(clippy::print_stderr)]
 #![allow(clippy::arithmetic_side_effects)]
