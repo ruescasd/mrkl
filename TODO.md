@@ -122,13 +122,16 @@
     - [ ] Minimize RwLock contention (VALIDATED: tree updates are 0-1ms, not needed currently)
           - Could use read, clone, update and then write, to perform the tree updates outsiude of the lock
     - [ ] Minimize PostgreSQL lock contention on source tables (documentation task for external applications)
-    - [ ] Root storage optimization (only store published roots, not all intermediate - blocked: rebuild scenario doesn't know which roots were published)
+    - [X] REMOVED, not necessary: "Storing only published roots is only a marginal reduction in memory. No need to store entire tree,
+          rewind never called by http endpoints"
+          
+          Root storage optimization (only store published roots, not all intermediate - blocked: rebuild scenario doesn't know which roots were published)
         - UPDATE: 
             Could store published roots (that is, size of the tree) persistently, this would allow
-              - storing only published roots in memory, when rebuilding we re-construct the published roots,
-                this could even allow storing the tree itself for that root since there would be fewer of them.
+            storing only published roots in memory, when rebuilding we re-construct the published roots,
+            this could even allow storing the tree itself for that root since there would be fewer of them.
                 
-                UPDATE: There is no need to store the entire tree, rewind is never called by http endpoints:
+                UPDATE: Storing only published roots is only a marginal reduction in memory. There is no need to store the entire tree, rewind is never called by http endpoints:
 
                   Hypothesis CONFIRMED. ✅ The rewind function cannot be called by any HTTP endpoints.
 
@@ -151,9 +154,9 @@
                   Key insight: The HTTP handlers only use the public API methods (prove_inclusion, verify_inclusion, prove_consistency, verify_consistency) which always use the current root for the "new" or "target" tree. The rewind function is only called when checking against historical roots, but the HTTP endpoints never pass historical roots as the verification target.
 
 
-              - rebuilding deterministically only from the source and the persisted roots (tree sizes),
+            - rebuilding deterministically only from the source and the persisted roots (tree sizes),
                 since this replays the same batch boundaries
-            To ensure that published roots are stored, we only acquire the tree RwLock and modify it after the published root (the tree size) is persisted (we do _not_ do the db insert within the lock)
+            - To ensure that published roots are stored, we only acquire the tree RwLock and modify it after the published root (the tree  size) is persisted (we do _not_ do the db insert within the lock)
     - [ ] Investigate PostgreSQL partitioning for merkle_log (partitions on log_name)
     - [ ] ct-merkle double-hashing issue (expects raw data, we're passing pre-computed hashes that get hashed again)
     - [ ] Configurable batch sizes and intervals per log
@@ -168,23 +171,6 @@
     - Maintains architectural separation: HTTP endpoints never touch database
 - [X] Graceful shutdown: Stop processor cleanly, wait for in-flight batches (PARTIAL: stop 
       implementein-flight tracking not yet added) ==> Not necessary.
-- [ ] Health check endpoint
-    - OPTION 1 (RECOMMENDED): Cached validation results refreshed by batch processor
-      - Add validation_cache: Arc<RwLock<ValidationResults>> to AppState
-      - Batch processor refreshes validation periodically (every 60s)
-      - GET /admin/health endpoint reads from cache (memory-only, no DB access)
-      - Maintains architectural separation while providing observability
-    - OPTION 2: Accept the exception for admin endpoints
-      - GET /admin/health directly calls validate_all_logs()
-      - Read-only operation, admin-only, zero concurrency, infrequent use
-      - Could be acceptable as an exception to "no DB access from HTTP" rule
-    - NOTE: --verify-db flag already provides external validation capability
-- [ ] Log management
-    - NO HTTP ENDPOINT: Admins modify verification_logs table directly via SQL
-    - Batch processor already loads from verification_logs every iteration (1s)
-    - Changes to enabled flag picked up automatically within 1 second
-    - Maintains architectural separation: HTTP layer never modifies database
-    - Document this operational pattern in deployment guide
 
 
 **Documentation**:
@@ -212,7 +198,7 @@
 - verification_sources maps source tables to logs (composite PK: source_table, log_name)
   - id_column (required): Must be unique per table for ordering guarantees
   - timestamp_column (optional): Enables chronological ordering
-- merkle_log stores entries with log_name FK (CASCADE delete when log removed)
+- merkle_log stores entries with log_name FK
 - DashMap<String, Arc<RwLock<MerkleState>>> provides concurrent per-log state
 - Startup rebuild ensures in-memory trees match database before serving requests
 - Batch processor: sole owner of all database operations (clean separation)

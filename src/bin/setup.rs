@@ -86,7 +86,7 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
 
     // 3. Create the merkle log table with strict controls - supports multiple logs and sources
     // CRITICAL: ON DELETE RESTRICT protects ground truth - merkle_log cannot be rebuilt from sources
-    // To delete a log, you must explicitly delete its merkle_log entries first (conscious decision)
+    // To delete a log, you must explicitly delete its merkle_log entries first
     client
         .batch_execute(
             r#"

@@ -97,7 +97,6 @@ pub async fn initialize_app_state() -> Result<AppState> {
 ///
 /// Returns an error if rebuilding logs from the database fails or if the TCP listener
 /// cannot bind to the specified address.
-#[allow(clippy::cognitive_complexity)]
 pub async fn run_server(app_state: AppState) -> Result<()> {
     // Clone the state for the processing task
     let process_state = app_state.clone();

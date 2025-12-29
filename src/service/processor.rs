@@ -143,7 +143,6 @@ impl SourceConfig {
 /// 
 /// Note: each log is processed serially, but errors are independently handled: an error 
 /// in one log does not affect others.
-#[allow(clippy::cognitive_complexity)]
 pub async fn run_batch_processor(app_state: AppState) {
     let batch_size: u32 = 10000;
     let interval = std::time::Duration::from_secs(1);
@@ -358,7 +357,6 @@ const CHUNK_SIZE: usize = 1000;
 /// 4) Inserts the rows into `merkle_log` with globally unique IDs
 /// 
 /// Returns statistics about the batch processing operation
-#[allow(clippy::cognitive_complexity)]
 async fn copy_source_rows(
     app_state: &AppState,
     log_name: &str,
@@ -582,7 +580,6 @@ async fn get_source_rows(txn: &Transaction<'_>, valid_configs: Vec<SourceConfig>
 ///
 /// Returns an error if any database operations fail, including getting a connection,
 /// loading log configurations, validating sources, or rebuilding individual logs.
-#[allow(clippy::cognitive_complexity)]
 pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
     tracing::info!("Rebuilding all logs from database");
 
