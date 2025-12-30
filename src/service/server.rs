@@ -97,7 +97,7 @@ pub async fn initialize_app_state() -> Result<AppState> {
 ///
 /// Returns an error if rebuilding logs from the database fails or if the TCP listener
 /// cannot bind to the specified address.
-pub async fn run_server(app_state: AppState) -> Result<()> {
+pub async fn run_server(app_state: AppState, addr: &SocketAddr) -> Result<()> {
     // Clone the state for the processing task
     let process_state = app_state.clone();
 
@@ -112,8 +112,6 @@ pub async fn run_server(app_state: AppState) -> Result<()> {
     // Create the server
     let app = create_server(app_state);
 
-    // Run our HTTP server
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     tracing::info!(address = %addr, "HTTP server listening");
     let server = axum::serve(tokio::net::TcpListener::bind(addr).await?, app);
 

@@ -16,6 +16,8 @@
 
 use anyhow::Result;
 use mrkl::service;
+use std::str::FromStr;
+use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -47,8 +49,11 @@ async fn main() -> Result<()> {
         std::process::exit(i32::from(!all_valid));
     }
 
+    let addr_string = std::env::var("MRKL_SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    let addr = SocketAddr::from_str(&addr_string)?;
+
     // Run the complete server with batch processing
-    service::run_server(app_state).await?;
+    service::run_server(app_state, &addr).await?;
 
     Ok(())
 }

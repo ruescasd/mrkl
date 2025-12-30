@@ -15,57 +15,120 @@ A high-performance Rust service that maintains cryptographically verifiable Merk
 - **Cryptographic Proofs** - Full support for inclusion and consistency proofs with verification
 - **Architectural Guarantees** - Clean separation between batch processor (DB owner) and HTTP server (memory-only)
 
-## Quick Start
+## Quickstart Tutorial
 
 ### Prerequisites
 
-- Rust 1.83+ (edition 2024)
-- PostgreSQL 12+
+- Rust (tested on 1.90)
+- PostgreSQL (tested on 18)
 - Environment variables in `.env`:
   ```bash
   DATABASE_URL=postgres://user:password@localhost/dbname
-  MRKL_SERVER_URL=http://localhost:3000  # Optional, for client examples
+  # The following are optional, with given default values
+  MRKL_SERVER_ADDR=127.0.0.1:3000
+  MRKL_SERVER_URL=http://localhost:3000
   ```
 
-### Installation
+### Schema setup
 
 ```bash
-# Clone and build
-git clone https://github.com/yourusername/mrkl.git
-cd mrkl
-cargo build --release
-
 # Initialize database schema
 cargo run --bin setup --release
+```
 
+The following tables are created
+
+* `merkle_log`
+
+    The ground truth for verifiable logs; this is where entries from verifiable sources are copied to in a committed order, its rows correspond to leaves of a merkle tree.
+
+* `verification_sources`
+
+    A source of entries for a verifiable log. These point to the pre-existing tables you wish to make verifiable.
+
+* `verification_logs`
+
+    A collection of one or more verification_sources. Proofs of inclusion and consistency are computed over a verifiable log as a unit, combining its sources.
+
+### Running the server
+
+```bash
 # Run the server
 cargo run --bin main --release
 ```
+This binary runs
+- **Batch Processor** - Continuously monitors source tables and updates `merkle_log` and in-memory merkle trees.
+- **HTTP API** - Serves proofs and tree state queries using in-memory data (the HTTP threads do not perform database access).
 
-### Basic Usage
+### Example: Inclusion Proof
 
-The server starts on `http://localhost:3000` with two components:
-- **Batch Processor** - Continuously monitors source tables and updates Merkle trees
-- **HTTP API** - Serves proofs and tree state queries (memory-only, no DB contention)
-
-#### 1. Configure a Log
-
-```sql
--- Create a log
-INSERT INTO verification_logs (log_name, description, enabled)
-VALUES ('my_log', 'My verification log', true);
-
--- Register a source table
-INSERT INTO verification_sources 
-  (source_table, log_name, hash_column, id_column, timestamp_column, enabled)
-VALUES 
-  ('certificates', 'my_log', 'leaf_hash', 'id', 'created_at', true);
+```bash
+# Simulate a post and compute an inclusion proof
+cargo run --example post
 ```
 
-Your source table must have:
-- `id_column` - Unique identifier (typically `BIGSERIAL PRIMARY KEY`)
-- `hash_column` - Pre-computed SHA256 hash (`BYTEA NOT NULL`)
-- `timestamp_column` - Optional timestamp for chronological ordering (`TIMESTAMPTZ`)
+This example
+1. Simulates a post to a verification source
+2. Waits for the new entry to be aggregated into the log
+3. Requests a proof of inclusion for the entry
+4. Verifies the returned proof
+   
+In order to work as a self-contained example, it also creates a sample `verification_source` and `verification_log`. To detect when the new entry is aggregated, `post` uses the `has_leaf` HTTP endpoint.
+
+### Example: Consistency Proof
+
+```bash
+# Run a log monitor
+cargo run --example monitor -- example_post_log
+```
+
+This example
+1. Polls a verification log for changes in the log root
+2. When a change is detected, requests a proof of consistency with respect to the previous root.
+3. Verifies the proof of consistency
+
+This example runs continuously. To trigger a change in the log root, you can
+run the `post` example from a new window and observe the output of the `monitor`:
+
+```bash
+💤 [Check #77] No changes (size: 3)
+💤 [Check #78] No changes (size: 3)
+📊 [Check #79] Size changed: 3 → 4
+   ✅ Consistency proof VERIFIED
+   → Log correctly appended 1 new entries
+   Size: 4
+   Root: 9NPDdyL+kAEQ6ej4...
+
+💤 [Check #80] No changes (size: 4)
+```
+To detect when the the log root has changed, `monitor` uses the `get_log_size` and `get_root` HTTP endpoints.
+
+### Metrics and the dashboard
+
+### Pausing/Resuming the Batch Processor
+
+```bash
+# Pause the Batch Processor
+curl -X POST localhost:3000/admin/pause
+{"status":"ok","message":"Batch processor paused","state":"paused"}
+```
+
+```bash
+# Resume the Batch Processor
+curl -X POST localhost:3000/admin/resume
+{"status":"ok","message":"Batch processor resumed","state":"running"}
+```
+
+### Stopping the server
+
+```bash
+# Stop the server
+curl -X POST localhost:3000/admin/stop
+{"status":"ok","message":"Batch processor stopping (will shut down entire application)","state":"stopping"}
+```
+## How to..
+
+### Configure a Log
 
 #### 2. Verify Inclusion
 
@@ -82,7 +145,7 @@ let hash = sha256(b"my data");
 proof.verify(&hash)?;
 ```
 
-#### 3. Monitor Consistency
+### Monitor Consistency
 
 ```rust
 // Get current root
@@ -95,7 +158,28 @@ proof.verify(&old_root, &current.root)?;
 
 See [examples/post.rs](examples/post.rs) for a complete workflow.
 
-## Architecture
+
+### Runtime Validation
+
+Check your configuration before deployment:
+
+```bash
+cargo run --bin main -- --verify-db
+```
+
+Validates:
+- Table existence
+- Column existence and types
+- Proper schema alignment
+
+## ⚠️Important notes
+
+### Source tables
+
+Your source table must have:
+- `id_column` - Unique identifier (typically `BIGSERIAL PRIMARY KEY`)
+- `hash_column` - Pre-computed SHA256 hash (`BYTEA NOT NULL`)
+- `timestamp_column` - Optional timestamp for chronological ordering (`TIMESTAMPTZ`)
 
 ### Ground Truth Invariant
 
@@ -120,78 +204,6 @@ Same source data → different Merkle roots. This is **correct behavior** for ap
 - ❌ Rebuild from source tables is NOT deterministic
 - 🔒 `merkle_log` must be backed up for disaster recovery
 
-### Component Separation
-
-```
-┌─────────────────────────────────────────┐
-│         Batch Processor (Tokio Task)    │
-│  - Sole owner of all database writes    │
-│  - Queries source tables every 1s       │
-│  - Inserts into merkle_log              │
-│  - Updates in-memory trees              │
-└──────────────┬──────────────────────────┘
-               │ Updates
-               ▼
-     ┌──────────────────────┐
-     │  DashMap<String,     │
-     │    Arc<RwLock<       │
-     │      MerkleState>>>  │
-     └──────────┬───────────┘
-                │ Reads
-                ▼
-┌─────────────────────────────────────────┐
-│         HTTP Server (Axum)              │
-│  - Memory-only operations               │
-│  - Never touches database               │
-│  - Fast, lock-free reads via DashMap    │
-└─────────────────────────────────────────┘
-```
-
-## Configuration
-
-### Database Schema
-
-The service uses three core tables:
-
-#### `verification_logs`
-Defines available logs:
-```sql
-CREATE TABLE verification_logs (
-    log_name    TEXT PRIMARY KEY,
-    created_at  TIMESTAMP DEFAULT NOW(),
-    description TEXT,
-    enabled     BOOLEAN DEFAULT true
-);
-```
-
-#### `verification_sources`
-Maps source tables to logs:
-```sql
-CREATE TABLE verification_sources (
-    source_table     TEXT NOT NULL,
-    log_name         TEXT NOT NULL REFERENCES verification_logs(log_name) ON DELETE CASCADE,
-    hash_column      TEXT NOT NULL,
-    id_column        TEXT NOT NULL,
-    timestamp_column TEXT,  -- Optional, enables chronological ordering
-    enabled          BOOLEAN DEFAULT true,
-    created_at       TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (source_table, log_name)
-);
-```
-
-#### `merkle_log`
-Ground truth storage (managed by batch processor):
-```sql
-CREATE TABLE merkle_log (
-    id              BIGSERIAL PRIMARY KEY,  -- Global sequence
-    log_name        TEXT NOT NULL REFERENCES verification_logs(log_name) ON DELETE RESTRICT,
-    source_table    TEXT NOT NULL,
-    source_id       BIGINT NOT NULL,
-    leaf_hash       BYTEA NOT NULL,
-    processed_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (log_name, source_table, source_id)
-);
-```
 
 ### Universal Ordering
 
@@ -201,18 +213,6 @@ Entries are ordered by: `(Option<Timestamp>, source_id, source_table)`
 - **Without timestamp_column**: ID-based order, sorts after timestamped entries
 - Deterministic tie-breaking via `(source_id, source_table)` tuple
 
-### Runtime Validation
-
-Check your configuration before deployment:
-
-```bash
-cargo run --bin main -- --verify-db
-```
-
-Validates:
-- Table existence
-- Column existence and types
-- Proper schema alignment
 
 ## API Reference
 
@@ -434,16 +434,6 @@ Active lint groups:
 - `clippy::pedantic` (library and main.rs only)
 - `clippy::suspicious`, `clippy::complexity`, `clippy::style`, `clippy::perf`
 - Restriction lints: `unwrap_used`, `panic`, `arithmetic_side_effects`, `indexing_slicing`, `print_stdout`, `print_stderr`
-
-### Examples
-
-```bash
-# Post an entry and verify inclusion
-cargo run --example post
-
-# Monitor consistency (CT-style auditor)
-cargo run --example monitor
-```
 
 ## Roadmap
 
