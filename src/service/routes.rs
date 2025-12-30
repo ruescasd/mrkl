@@ -274,7 +274,6 @@ pub async fn get_consistency_proof(
             // Return the verified proof
             let consistency_proof = ConsistencyProof {
                 old_tree_size: old_size,
-                old_root: query.old_root,
                 proof_bytes: proof.as_bytes().to_vec(),
                 new_root: tree.root(),
                 new_tree_size: tree.len(),

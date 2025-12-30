@@ -6,6 +6,7 @@ use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 
 use crate::LeafHash;
+use crate::service::metrics::LogMetrics;
 use crate::service::state::AppState;
 
 /// Statistics from a batch processing operation
@@ -191,6 +192,19 @@ pub async fn run_batch_processor(app_state: AppState) {
                 continue;
             }
         };
+
+        // Remove any logs from in-memory state that are no longer enabled
+        let in_memory = app_state.merkle_states.iter().map(|entry| entry.key().clone()).collect::<Vec<_>>();
+        for log in in_memory {
+            if !log_names.contains(&log) {
+                tracing::info!(log_name = %log, "Removing disabled log '{log}' from memory");
+                if let Some(tree) = app_state.merkle_states.remove(&log) {
+                    let bytes = LogMetrics::tree_size_bytes(tree.1.read().tree.len());
+                    tracing::info!(log_name = %log, "Removed log from memory ({bytes} bytes freed)");   
+                    drop(tree);
+                }
+            }
+        }
 
         let now = std::time::Instant::now();
         // Process each log independently

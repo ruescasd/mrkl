@@ -97,18 +97,15 @@ async fn main() -> Result<()> {
 
                     // Verify consistency
                     match verify_consistency(&client, log_name, &state, &new_state).await {
-                        Ok(true) => {
+                        Ok(()) => {
                             println!("   ✅ Consistency proof VERIFIED");
                             println!(
                                 "   → Log correctly appended {} new entries",
                                 new_state.size - state.size
                             );
                         }
-                        Ok(false) => {
-                            println!("   ❌ CONSISTENCY VERIFICATION FAILED!");
-                        }
                         Err(e) => {
-                            println!("   ⚠️  Error verifying consistency: {e}");
+                            println!("   ❌ CONSISTENCY VERIFICATION FAILED!: {e}");
                         }
                     }
 
@@ -152,35 +149,103 @@ async fn fetch_log_state(client: &Client, log_name: &str) -> Result<LogState> {
 }
 
 /// Verifies that the new state is consistent with the old state
+///
+/// This function performs strict consistency verification that handles race conditions.
+/// If the tree continues growing during verification, it recursively validates the
+/// entire chain of observed states to ensure no fraudulent roots were observed.
 async fn verify_consistency(
     client: &Client,
     log_name: &str,
     old_state: &LogState,
     new_state: &LogState,
-) -> Result<bool> {
+) -> Result<()> {
     if old_state.size == 0 {
         // No previous state to verify against
-        return Ok(true);
+        return Ok(());
     }
 
     if new_state.size < old_state.size {
         // Log size decreased - this should never happen!
         println!("   ⚠️  WARNING: Tree size decreased!");
-        return Ok(false);
+        anyhow::bail!("Tree size decreased from {} to {}", old_state.size, new_state.size);
     }
 
     if new_state.size == old_state.size {
         // Same size, roots should match
-        return Ok(new_state.root == old_state.root);
+        if new_state.root == old_state.root {
+            return Ok(());
+        } else {
+            println!("   ⚠️  WARNING: Tree root mismatch with same size!");
+            anyhow::bail!("Tree root mismatch with same size {}", new_state.size);
+        }
     }
 
-    // Request consistency proof
-    let is_consistent = client
-        .verify_tree_consistency(log_name, old_state.root.clone())
-        .await?;
+    // Request consistency proof - does not check proof.new_root against observed new_state.root
+    // client
+    //    .verify_tree_consistency(log_name, old_state.root.clone())
+    //    .await?;
 
-    Ok(is_consistent)
+    verify_strict(client, log_name, old_state.root.clone(), new_state.root.clone()).await?;
+
+    Ok(())
 }
+
+/// Recursively verifies consistency between observed roots, handling race conditions
+///
+/// This function ensures that `new_root` is legitimately part of the append-only chain
+/// extending from `old_root`. If the tree has grown beyond `new_root` by the time we
+/// verify, it recursively validates the entire chain.
+///
+/// # Why This Matters
+///
+/// Consider this timeline:
+/// - T1: Monitor observes root R1
+/// - T2: Monitor observes root R2  
+/// - T3: Monitor requests consistency proof, but tree is now at R3
+///
+/// A simple verification would prove R1→R3, but wouldn't validate that R2 was
+/// actually part of the legitimate history. R2 could be a fabricated root.
+///
+/// `verify_strict` solves this by:
+/// 1. Requesting proof from R1 to current state (gets R3)
+/// 2. If R3 ≠ R2, recursively verify R2→R3
+/// 3. This proves the chain: R1→R2→R3, validating all observed states
+///
+/// # Arguments
+///
+/// * `client` - The mrkl client for making consistency proof requests
+/// * `log_name` - The name of the log to verify
+/// * `old_root` - The previous root hash we observed
+/// * `new_root` - The new root hash we observed (to be validated)
+///
+/// # Returns
+///
+/// `Ok(())` if the chain is valid, error otherwise.
+///
+/// # Note
+///
+/// This function is recursive and uses `Box::pin` to handle the recursive async call,
+/// as Rust requires boxed futures for recursive async functions.
+fn verify_strict<'a>(
+    client: &'a Client,
+    log_name: &'a str,
+    old_root: Vec<u8>,
+    new_root: Vec<u8>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+    Box::pin(async move {
+        // Request consistency proof
+        let proof_new_root = client
+            .verify_tree_consistency(log_name, old_root)
+            .await?;
+
+        if proof_new_root == new_root {
+            Ok(())
+        } else {
+            verify_strict(client, log_name, new_root, proof_new_root).await
+        }
+    })
+}
+
 
 /// Prints a formatted representation of log state
 fn print_state(state: &LogState) {

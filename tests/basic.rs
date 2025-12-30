@@ -26,13 +26,18 @@ async fn setup_client() -> Result<TestClient> {
     Ok(client)
 }
 
+fn hash(input: &str) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hasher.finalize().to_vec()
+}
+
 #[ignore]
 #[serial]
 #[tokio::test]
 async fn test_inclusion_proofs() -> Result<()> {
     let client = setup_client().await?;
-
-    use sha2::{Digest, Sha256};
 
     // Get initial log size (may not be 0 if tests ran before)
     let initial_size = client.client.get_log_size("test_log_single_source").await?;
@@ -44,10 +49,8 @@ async fn test_inclusion_proofs() -> Result<()> {
 
     // Add entries and collect their hashes
     for entry in &entries {
-        let mut hasher = Sha256::new();
-        hasher.update(entry.as_bytes());
-        let hash = hasher.finalize();
-        hashes.push(hash.to_vec());
+        let hash = hash(entry);
+        hashes.push(hash);
 
         client.add_entry(entry).await?;
     }
@@ -74,7 +77,7 @@ async fn test_inclusion_proofs() -> Result<()> {
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
         let proof = client
             .client
-            .get_inclusion_proof("test_log_single_source", entry)
+            .get_inclusion_proof("test_log_single_source", hash)
             .await?;
 
         // Verify proof has correct root
@@ -283,11 +286,13 @@ async fn test_consistency_proofs() -> Result<()> {
     // Verify consistency between each historical root and final state
     for (i, historical_root) in historical_roots.iter().enumerate() {
         println!("🔍 Verifying consistency with batch {}", i + 1);
-        assert!(
-            client
-                .client
-                .verify_tree_consistency("test_log_single_source", historical_root.clone())
-                .await?,
+        let new_root = client
+            .client
+            .verify_tree_consistency("test_log_single_source", historical_root.clone())
+            .await?;
+        assert_eq!(
+            new_root,
+            final_root,
             "Tree should be consistent with historical root from batch {}",
             i + 1
         );
@@ -353,7 +358,7 @@ async fn test_burst_operations() -> Result<()> {
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
         let proof = client
             .client
-            .get_inclusion_proof("test_log_single_source", entry)
+            .get_inclusion_proof("test_log_single_source", hash)
             .await?;
         assert_eq!(
             root, proof.root,
@@ -455,7 +460,7 @@ async fn test_large_batch_performance() -> Result<()> {
             .expect("sample index should be within bounds");
         let proof = client
             .client
-            .get_inclusion_proof("test_log_single_source", entry)
+            .get_inclusion_proof("test_log_single_source", hash)
             .await?;
         assert!(
             proof.verify(hash).is_ok(),
@@ -589,23 +594,23 @@ async fn test_universal_ordering() -> Result<()> {
 
     let proof1 = client
         .client
-        .get_inclusion_proof("test_log_multi_source", "entry_t1")
+        .get_inclusion_proof("test_log_multi_source", &hash("entry_t1"))
         .await?;
     let proof2 = client
         .client
-        .get_inclusion_proof("test_log_multi_source", "entry_t2")
+        .get_inclusion_proof("test_log_multi_source", &hash("entry_t2"))
         .await?;
     let proof3 = client
         .client
-        .get_inclusion_proof("test_log_multi_source", "entry_t3")
+        .get_inclusion_proof("test_log_multi_source", &hash("entry_t3"))
         .await?;
     let proof4 = client
         .client
-        .get_inclusion_proof("test_log_multi_source", "entry_no_ts_1")
+        .get_inclusion_proof("test_log_multi_source", &hash("entry_no_ts_1"))
         .await?;
     let proof5 = client
         .client
-        .get_inclusion_proof("test_log_multi_source", "entry_no_ts_2")
+        .get_inclusion_proof("test_log_multi_source", &hash("entry_no_ts_2"))
         .await?;
 
     println!(
@@ -745,19 +750,19 @@ async fn test_no_timestamp_ordering() -> Result<()> {
 
     let proof1 = client
         .client
-        .get_inclusion_proof("test_log_no_timestamp", "entry_b_1")
+        .get_inclusion_proof("test_log_no_timestamp", &hash("entry_b_1"))
         .await?;
     let proof2 = client
         .client
-        .get_inclusion_proof("test_log_no_timestamp", "entry_a_1")
+        .get_inclusion_proof("test_log_no_timestamp", &hash("entry_a_1"))
         .await?;
     let proof3 = client
         .client
-        .get_inclusion_proof("test_log_no_timestamp", "entry_b_2")
+        .get_inclusion_proof("test_log_no_timestamp", &hash("entry_b_2"))
         .await?;
     let proof4 = client
         .client
-        .get_inclusion_proof("test_log_no_timestamp", "entry_a_2")
+        .get_inclusion_proof("test_log_no_timestamp", &hash("entry_a_2"))
         .await?;
 
     println!(

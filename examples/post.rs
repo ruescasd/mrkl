@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
 
     // Step 5: Verify - Get inclusion proof and verify it
     println!("🔍 Fetching inclusion proof...");
-    let proof = client.get_inclusion_proof(LOG_NAME, &data).await?;
+    let proof = client.get_inclusion_proof(LOG_NAME, &hash).await?;
     println!("✅ Received proof:");
     println!("   - Leaf index: {}", proof.index);
     println!("   - Tree size: {}", proof.tree_size);

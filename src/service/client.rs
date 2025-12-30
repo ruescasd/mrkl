@@ -105,14 +105,14 @@ impl Client {
     ///
     /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
     /// or if the server returns an error status.
-    pub async fn get_inclusion_proof(&self, log_name: &str, data: &str) -> Result<InclusionProof> {
+    pub async fn get_inclusion_proof(&self, log_name: &str, data: &Vec<u8>) -> Result<InclusionProof> {
         // Compute the hash from the data
-        let mut hasher = Sha256::new();
-        hasher.update(data.as_bytes());
-        let hash_result = hasher.finalize();
+        // let mut hasher = Sha256::new();
+        // hasher.update(data.as_bytes());
+        // let hash_result = hasher.finalize();
 
         let query = crate::service::InclusionQuery {
-            hash: hash_result.to_vec(),
+            hash: data.clone(),
         };
 
         // Make the request with the base64 encoded hash
@@ -193,22 +193,16 @@ impl Client {
     ///
     /// Returns an error if fetching the consistency proof or current root fails,
     /// or if proof verification fails.
-    pub async fn verify_tree_consistency(&self, log_name: &str, old_root: Vec<u8>) -> Result<bool> {
+    pub async fn verify_tree_consistency(&self, log_name: &str, old_root: Vec<u8>) -> Result<Vec<u8>> {
         // Get consistency proof between the old root and current state
-        let proof = self.get_consistency_proof(log_name, old_root).await?;
-
-        // Get current root to validate the proof matches current state
-        let current_root = self.get_root(log_name).await?;
-        if proof.new_root != current_root {
-            return Ok(false);
-        }
+        let proof = self.get_consistency_proof(log_name, old_root.clone()).await?;
 
         // Verify the proof cryptographically
         proof
-            .verify()
+            .verify(&old_root)
             .map_err(|e| anyhow::anyhow!("Proof verification failed: {e}"))?;
         
-        Ok(true)
+        Ok(proof.new_root)
     }
 
     /// Checks if a leaf (identified by its hash) exists in the log

@@ -96,8 +96,6 @@ impl InclusionProof {
 pub struct ConsistencyProof {
     /// The number of leaves in the old (smaller) tree
     pub old_tree_size: u64,
-    /// The root hash of the old tree
-    pub old_root: Vec<u8>,
     /// The consistency proof path bytes
     pub proof_bytes: Vec<u8>,
     /// The root hash of the new (larger) tree
@@ -114,13 +112,13 @@ impl ConsistencyProof {
     /// - `MalformedProof`: if the old or new root hash lengths are invalid, or if the proof bytes are malformed
     /// - `ConsistencyVerifError`: if the proof verification fails
     ///
-    pub fn verify(&self) -> Result<(), ct_merkle::ConsistencyVerifError> {
+    pub fn verify(&self, old_root: &[u8]) -> Result<(), ct_merkle::ConsistencyVerifError> {
         // Create digest from old root bytes
         let mut old_digest = Output::<Sha256>::default();
-        if self.old_root.len() != old_digest.len() {
+        if old_root.len() != old_digest.len() {
             return Err(ct_merkle::ConsistencyVerifError::MalformedProof);
         }
-        old_digest.copy_from_slice(&self.old_root);
+        old_digest.copy_from_slice(&old_root);
 
         // Create old root hash with digest and size
         let old_root = RootHash::<Sha256>::new(old_digest, self.old_tree_size);

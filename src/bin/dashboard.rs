@@ -131,7 +131,7 @@ fn format_memory(bytes: u64) -> String {
 }
 
 /// Displays metrics in the terminal.
-fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
+fn display_metrics(metrics: &MetricsResponse, refresh_interval: u64) -> Result<()> {
     let mut stdout = stdout();
 
     // Clear screen and move to top (simple approach, no raw mode needed)
@@ -207,8 +207,7 @@ fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
 
     println!();
     println!(
-        "Press Ctrl+C to exit | Refreshing every {}s",
-        std::env::var("REFRESH_INTERVAL").unwrap_or_else(|_| "1".to_string())
+        "Press Ctrl+C to exit | Refreshing every {refresh_interval}s",
     );
 
     stdout.flush()?;
@@ -217,13 +216,15 @@ fn display_metrics(metrics: &MetricsResponse) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv::dotenv().ok();
+
     // Get server URL from environment or use default
     let server_url =
         std::env::var("MRKL_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
     let metrics_url = format!("{server_url}/metrics");
 
     // Refresh interval in seconds
-    let refresh_interval = std::env::var("REFRESH_INTERVAL")
+    let refresh_interval = std::env::var("MRKL_DASHBOARD_REFRESH_INTERVAL")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
@@ -237,7 +238,7 @@ async fn main() -> Result<()> {
     loop {
         match fetch_metrics(&metrics_url).await {
             Ok(metrics) => {
-                if let Err(e) = display_metrics(&metrics) {
+                if let Err(e) = display_metrics(&metrics, refresh_interval) {
                     eprintln!("Display error: {e}");
                 }
             }
