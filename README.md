@@ -137,7 +137,15 @@ curl -X POST localhost:3000/admin/stop
 To configure a log you
 1. Identify one or more source tables and their required columns
 2. Insert an entry into `verification_logs`
-2. Insert one entry `verification_sources` for each source table from 1.
+3. Insert one entry `verification_sources` for each source table from 1.
+
+#### Step 1: Identify source tables and their required columns
+
+Your source table(s) must have:
+- An **id column** - [Unique](#source-table-id-column), total order identifier (typically `BIGSERIAL PRIMARY KEY`)
+- A **hash column** - Pre-computed SHA256 hash (`BYTEA NOT NULL`)
+It can optionally also have:
+- A **timestamp_column** - timestamp for chronological ordering (`TIMESTAMPTZ`)
 
 Examples of steps 2 and 3 follow, taken from [examples/post.rs](examples/post.rs).
 
@@ -183,6 +191,8 @@ in this example, the columns for the source table would be
 
 ### Verify Inclusion
 
+In the following example, a hash value is proved to be included in log `my_log`
+
 ```rust
 use mrkl::service::Client;
 
@@ -200,6 +210,9 @@ A complete example can be seen in [examples/post.rs](examples/post.rs).
 
 ### Monitor Consistency
 
+In the following example, the root of the log `my_log` is proved to be consistent 
+with a previous root.
+
 ```rust
 // Get current root
 let old_root = client.get_root("my_log").await?;
@@ -212,15 +225,15 @@ A full consistency verification workflow can be seen in [examples/monitor.rs](ex
 
 ### Validate log configurations
 
+You can check for correct verification_log and verification_source configurations with
+
 ```bash
 # Checks all log configurations
 cargo run --bin main -- --verify-db
 ```
 
-Validates:
-- Table existence
-- Column existence and types
-- Proper schema alignment
+This will check that logs are configured correctly, pointing to existing sources with the
+right column types.
 
 ```bash
 $ cargo run --bin main -- --verify-db
@@ -271,8 +284,19 @@ Same source data → different Merkle roots. This is **correct behavior** for ap
 
 ### Source table id column
 
-The **id column** _must_ be unique across all entries in a source table, it must have a unique
-constraint on it. It is _not_ sufficient that this id is _part_ of a unique constraint.
+The **id column** _must_ be unique across all entries in a source table. It must have a unique
+constraint on it - either a `PRIMARY KEY` or `UNIQUE` constraint. It is _not_ sufficient that 
+this id is _part_ of a composite unique constraint.
+
+**Why uniqueness matters**: The batch processor queries source tables by id ranges (e.g., `WHERE id > last_processed_id`). 
+If ids are not unique, entries with duplicate ids could be skipped - if a row with id=5 is processed, 
+any other rows with id=5 inserted later will never be picked up by subsequent batches.
+
+**Performance benefit**: Both `PRIMARY KEY` and `UNIQUE` constraints automatically create an index 
+on the column, which ensures efficient batch processing queries.
+
+The validation tool (`cargo run --bin main -- --verify-db`) will check both uniqueness and 
+indexing requirements.
 
 ### Tiered ordering
 
@@ -359,7 +383,7 @@ Consistency proof between old root and current root.
 ### Queries
 
 #### `GET /logs/{log_name}/has_leaf?hash=<base64>`
-Check if a leaf exists (O(1) via index map).
+Check if a leaf exists.
 
 **Response:**
 ```json
@@ -371,7 +395,7 @@ Check if a leaf exists (O(1) via index map).
 ```
 
 #### `GET /logs/{log_name}/has_root?root=<base64>`
-Check if a root exists in history (O(1) via root map).
+Check if a root exists in history.
 
 **Response:**
 ```json
@@ -405,25 +429,6 @@ Detailed performance metrics (JSON).
 - Per-log metrics: rows copied, timing breakdown (query/insert/fetch/tree)
 - Global metrics: cycle duration, active logs, idle percentage
 
-### Load Testing
-
-Simulate high-throughput workloads:
-
-```bash
-cargo run --bin load --release -- \
-  --rows-per-interval 1000 \
-  --num-sources 3
-```
-
-### Metrics Endpoint
-
-Query metrics programmatically:
-
-```bash
-curl http://localhost:3000/metrics | jq
-```
-
-
 ## Development
 
 ### Building
@@ -434,89 +439,70 @@ cargo build
 
 # Release build (optimized)
 cargo build --release
-
-# With specific features
-cargo build --features "serde"
 ```
 
 ### Testing
 
+#### Unit tests
+
 ```bash
-# Run all tests
+# Run unit tests
 cargo test
+```
+#### Integration tests
 
-# Run with output
-cargo test -- --nocapture
+Running integration tests requires the server to be running
 
-# Run specific test
-cargo test test_universal_ordering
+```bash
+# Run the server
+cargo run --bin main --release
 
-# Integration tests only
-cargo test --test '*'
+# Run integration tests from a new process
+cargo test --test basic -- --include-ignored --nocapture
 ```
 
-Tests use `serial_test` to prevent concurrent database access.
+Because integration tests require the server to be running, they are marked `#[ignore]`. They also use `serial_test` to prevent concurrent database access, which causes test failures.
 
 ### Linting
-
-Strict lint configuration enforced:
 
 ```bash
 # Check all lints
 cargo clippy --all-targets -- -D warnings
-
-# Fix auto-fixable lints
-cargo clippy --fix --all-targets
 ```
-
-Active lint groups:
-- `clippy::pedantic` (library and main.rs only)
-- `clippy::suspicious`, `clippy::complexity`, `clippy::style`, `clippy::perf`
-- Restriction lints: `unwrap_used`, `panic`, `arithmetic_side_effects`, `indexing_slicing`, `print_stdout`, `print_stderr`
+The lint configuration is relatively strict, it can be found in `Cargo.toml`.
 
 ### Performance
 
-Current benchmarks (measured with load generator):
+#### General considerations
 
-- **Throughput**: 150,000+ rows/second
-- **Latency**: 12-15ms per 1000-row batch (query + insert + tree update)
-- **Idle Time**: 94% (system is rarely bottlenecked)
+##### Source table contention
 
-**Timing Breakdown** (per batch):
-- Query source tables: ~5-7ms
-- Insert into merkle_log: ~5-7ms (multi-row INSERT optimization)
-- Tree updates: 0-1ms (RwLock not a bottleneck)
+Contention for source tables can be minimized with
+* Appropriate transaction isolation levels: use Read Committed (the default) in the batch processor
+* Appropriate indices on source tables: use an index on the id column.
 
-**Optimizations Applied**:
-- Multi-row INSERT (10x improvement over single-row)
-- Advisory locks per log (no cross-log contention)
-- Memory-only HTTP operations (no DB queries)
-- Early-exit source table queries (stops at batch_size)
+##### `merkle_log` fetches
 
-## Roadmap
+Fetch performance on `merkle_log` benefits from
 
-See [TODO.md](TODO.md) for detailed task tracking.
+* Appropriate indices: use an index on (id, logname)
 
-**Completed:**
-- ✅ Multiple independent logs with per-log configuration
-- ✅ Universal ordering system (chronological + ID-based)
-- ✅ Comprehensive error handling and validation
-- ✅ Performance monitoring and optimization
-- ✅ Graceful shutdown and pause control
+##### Merkle tree lock contention
 
-**Next Steps:**
-- [ ] Deployment guide (Docker, systemd)
-- [ ] OpenAPI/Swagger specification
-- [ ] Proof caching for frequently requested proofs
-- [ ] Read replicas for HTTP layer scaling
+Contention for merkle trees can be minimized with
+* A concurrent hashmap: use Dashmap to store logs indexed by name
+* Minimize locking scope: release the RwLock as soon as possible
 
-## License
+#### Load Testing
 
-[Your License Here]
+The `load` binary simulates heavy workloads using direct database inserts to
+create entries. Together with the `dashboard` binary this can be used to measure
+performance under load.
 
-## Contributing
-
-[Your Contributing Guidelines Here]
+```bash
+# 1000 entries per cycle, spread across 3 sources per log
+cargo run --bin load --release -- --rows-per-interval 1000 --num-sources 3
+```
 
 ## Acknowledgments
 

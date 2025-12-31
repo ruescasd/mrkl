@@ -118,10 +118,10 @@ impl ConsistencyProof {
         if old_root.len() != old_digest.len() {
             return Err(ct_merkle::ConsistencyVerifError::MalformedProof);
         }
-        old_digest.copy_from_slice(&old_root);
+        old_digest.copy_from_slice(old_root);
 
         // Create old root hash with digest and size
-        let old_root = RootHash::<Sha256>::new(old_digest, self.old_tree_size);
+        let old_root_ = RootHash::<Sha256>::new(old_digest, self.old_tree_size);
 
         // Create digest from new root bytes
         let mut new_digest = Output::<Sha256>::default();
@@ -137,14 +137,14 @@ impl ConsistencyProof {
         let proof = CtConsistencyProof::<Sha256>::try_from_bytes(self.proof_bytes.clone())?;
 
         // Verify consistency
-        new_root.verify_consistency(&old_root, &proof)
+        new_root.verify_consistency(&old_root_, &proof)
     }
 }
 
 /// Represents a pre-computed hash value for the merkle tree.
 ///
 /// Although the intent of this structure it to store pre-computed hashes,
-/// the architectur of ct-merkle does not allow hashes to be pre-computed externally,
+/// the architecture of ct-merkle does not allow hashes to be pre-computed externally,
 /// this means that even if a pre-computed hash is provided, ct-merkle will re-hash
 /// it internally. This also means that it is possible to insert arbitrary binary data
 /// to the tree, not just hashes.

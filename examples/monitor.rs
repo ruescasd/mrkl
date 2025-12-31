@@ -231,7 +231,7 @@ fn verify_strict<'a>(
     log_name: &'a str,
     old_root: Vec<u8>,
     new_root: Vec<u8>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
     Box::pin(async move {
         // Request consistency proof
         let proof_new_root = client

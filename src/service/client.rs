@@ -105,14 +105,14 @@ impl Client {
     ///
     /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
     /// or if the server returns an error status.
-    pub async fn get_inclusion_proof(&self, log_name: &str, data: &Vec<u8>) -> Result<InclusionProof> {
+    pub async fn get_inclusion_proof(&self, log_name: &str, data: &[u8]) -> Result<InclusionProof> {
         // Compute the hash from the data
         // let mut hasher = Sha256::new();
         // hasher.update(data.as_bytes());
         // let hash_result = hasher.finalize();
 
         let query = crate::service::InclusionQuery {
-            hash: data.clone(),
+            hash: data.to_owned(),
         };
 
         // Make the request with the base64 encoded hash

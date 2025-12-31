@@ -31,6 +31,8 @@ pub struct ColumnValidation {
     pub expected_type: String,
     /// Whether the actual type matches the expected type
     pub type_matches: bool,
+    /// Whether the column has an index (only checked for id columns)
+    pub indexed: Option<bool>,
 }
 
 /// Validation result for a single log
@@ -90,6 +92,11 @@ impl SourceValidation {
                     col.column_name,
                     col.data_type.as_ref().unwrap_or(&"unknown".to_string()),
                     col.expected_type
+                ));
+            } else if matches!(col.indexed, Some(false)) {
+                errors.push(format!(
+                    "ID column '{}' should be indexed for performance (add PRIMARY KEY, UNIQUE constraint, or explicit index)",
+                    col.column_name
                 ));
             }
         }
@@ -244,21 +251,30 @@ async fn validate_source(
     }
 
     // Validate columns
-    let id_col_validation = validate_column(
+    let id_col_validation = validate_column_with_index_check(
         conn,
         source_table,
         id_column,
         &["bigint", "integer", "smallint", "numeric"],
+        true, // Check for index on id column
     )
     .await?;
-    let hash_col_validation = validate_column(conn, source_table, hash_column, &["bytea"]).await?;
+    let hash_col_validation = validate_column_with_index_check(
+        conn,
+        source_table,
+        hash_column,
+        &["bytea"],
+        false, // No index check for hash column
+    )
+    .await?;
     let timestamp_col_validation = if let Some(ts_col) = timestamp_column {
         Some(
-            validate_column(
+            validate_column_with_index_check(
                 conn,
                 source_table,
                 ts_col,
                 &["timestamp without time zone", "timestamp with time zone"],
+                false, // No index check for timestamp column
             )
             .await?,
         )
@@ -277,11 +293,14 @@ async fn validate_source(
 }
 
 /// Validates a single column exists and has acceptable type
-async fn validate_column(
+/// 
+/// If `check_index` is true, also verifies the column has an index.
+async fn validate_column_with_index_check(
     conn: &PooledConnection,
     table_name: &str,
     column_name: &str,
     expected_types: &[&str],
+    check_index: bool,
 ) -> Result<ColumnValidation> {
     // Query column information
     let row_opt = conn
@@ -310,12 +329,20 @@ async fn validate_column(
             .iter()
             .any(|&expected| actual_type.eq_ignore_ascii_case(expected));
 
+        // Check for index if requested
+        let indexed = if check_index {
+            Some(check_column_indexed(conn, table_name, column_name).await?)
+        } else {
+            None
+        };
+
         Ok(ColumnValidation {
             column_name: column_name.to_string(),
             exists: true,
             data_type: Some(actual_type.clone()),
             expected_type: expected_types.join(" or "),
             type_matches,
+            indexed,
         })
     } else {
         Ok(ColumnValidation {
@@ -324,8 +351,37 @@ async fn validate_column(
             data_type: None,
             expected_type: expected_types.join(" or "),
             type_matches: false,
+            indexed: None,
         })
     }
+}
+
+/// Checks if a column has an index on it
+/// 
+/// Returns true if the column is indexed (via PRIMARY KEY, UNIQUE constraint, or explicit index)
+async fn check_column_indexed(
+    conn: &PooledConnection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool> {
+    // Query pg_indexes to find indexes that include this column
+    // Checks for: single-column indexes, or multi-column indexes where this column is first
+    let indexed: bool = conn
+        .query_one(
+            "SELECT EXISTS (
+                SELECT 1
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = $1
+                  AND (indexdef LIKE '%(' || $2 || ')%'
+                       OR indexdef LIKE '%(' || $2 || ',%')
+            )",
+            &[&table_name, &column_name],
+        )
+        .await?
+        .get(0);
+
+    Ok(indexed)
 }
 
 /// Pretty-prints validation results

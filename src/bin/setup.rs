@@ -103,8 +103,6 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
 
         -- Index for querying a specific log's entries in order
         CREATE INDEX IF NOT EXISTS idx_merkle_log_by_log ON merkle_log(log_name, id);
-        -- Index on leaf_hash for proof generation
-        CREATE INDEX IF NOT EXISTS merkle_log_hash_idx ON merkle_log(leaf_hash);
     "#,
         )
         .await?;
