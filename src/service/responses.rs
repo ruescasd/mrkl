@@ -13,7 +13,7 @@ use crate::{ConsistencyProof, InclusionProof};
 ///
 /// All endpoints return either Success(data) or `Error(error_info)`
 /// This ensures consistent JSON structure across the API
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum ApiResponse<T> {
     /// Successful response with data
@@ -181,7 +181,7 @@ pub struct HasLogResponse {
 }
 
 /// Per-log metrics snapshot
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LogMetricsResponse {
     /// Number of rows in last batch
     pub last_batch_rows: u64,
@@ -210,7 +210,7 @@ pub struct LogMetricsResponse {
 }
 
 /// Global metrics snapshot
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GlobalMetricsResponse {
     /// Duration of last processing cycle (ms)
     pub last_cycle_duration_ms: u64,
@@ -221,7 +221,7 @@ pub struct GlobalMetricsResponse {
 }
 
 /// Response for GET /metrics
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetricsResponse {
     /// Per-log metrics keyed by log name
     pub logs: HashMap<String, LogMetricsResponse>,

@@ -1,3 +1,7 @@
+use crate::service::responses::{
+    ApiResponse, ConsistencyProofResponse, HasLeafResponse, HasLogResponse, HasRootResponse,
+    InclusionProofResponse, MetricsResponse, RootResponse, SizeResponse,
+};
 use crate::{ConsistencyProof, InclusionProof};
 use anyhow::Result;
 use base64::Engine;
@@ -43,24 +47,15 @@ impl Client {
             .get(format!("{}/logs/{}/size", self.api_base_url, log_name))
             .send()
             .await?
-            .json::<serde_json::Value>()
+            .json::<ApiResponse<SizeResponse>>()
             .await?;
 
-        // Check for error response
-        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
-            let error_msg = response
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error getting log size: {error_msg}"));
+        match response {
+            ApiResponse::Success(data) => Ok(data.size),
+            ApiResponse::Error { error, .. } => {
+                Err(anyhow::anyhow!("Error getting log size: {error}"))
+            }
         }
-
-        let size = response
-            .get("size")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| anyhow::anyhow!("Invalid size response"))?;
-
-        Ok(size)
     }
 
     /// Gets the current merkle root
@@ -75,28 +70,17 @@ impl Client {
             .get(format!("{}/logs/{}/root", self.api_base_url, log_name))
             .send()
             .await?
-            .json::<serde_json::Value>()
+            .json::<ApiResponse<RootResponse>>()
             .await?;
 
-        // Check for error response
-        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
-            let error_msg = response
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error getting root: {error_msg}"));
+        match response {
+            ApiResponse::Success(data) => {
+                // Decode base64 root to bytes
+                let root_bytes = base64::engine::general_purpose::STANDARD.decode(&data.merkle_root)?;
+                Ok(root_bytes)
+            }
+            ApiResponse::Error { error, .. } => Err(anyhow::anyhow!("Error getting root: {error}")),
         }
-
-        // Parse the base64 encoded root from the response
-        let root_b64 = response
-            .get("merkle_root")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Invalid root response"))?;
-
-        // Decode base64 back to bytes
-        let root_bytes = base64::engine::general_purpose::STANDARD.decode(root_b64)?;
-
-        Ok(root_bytes)
     }
 
     /// Gets an inclusion proof for a given hash or piece of data
@@ -106,11 +90,6 @@ impl Client {
     /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
     /// or if the server returns an error status.
     pub async fn get_inclusion_proof(&self, log_name: &str, data: &[u8]) -> Result<InclusionProof> {
-        // Compute the hash from the data
-        // let mut hasher = Sha256::new();
-        // hasher.update(data.as_bytes());
-        // let hash_result = hasher.finalize();
-
         let query = crate::service::InclusionQuery {
             hash: data.to_owned(),
         };
@@ -121,26 +100,16 @@ impl Client {
             .get(format!("{}/logs/{}/proof", self.api_base_url, log_name))
             .query(&query)
             .send()
+            .await?
+            .json::<ApiResponse<InclusionProofResponse>>()
             .await?;
 
-        // Parse the response JSON into our MerkleProof struct
-        let response = response.json::<serde_json::Value>().await?;
-
-        // Check for error response
-        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
-            let error_msg = response
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error getting inclusion proof: {error_msg}"));
+        match response {
+            ApiResponse::Success(data_) => Ok(data_.proof),
+            ApiResponse::Error { error, .. } => {
+                Err(anyhow::anyhow!("Error getting inclusion proof: {error}"))
+            }
         }
-
-        // Parse into our structured MerkleProof type
-        let proof = response
-            .get("proof")
-            .ok_or_else(|| anyhow::anyhow!("Missing proof field in response"))?;
-        let proof = serde_json::from_value(proof.clone())?;
-        Ok(proof)
     }
 
     /// Gets a consistency proof proving that the current tree state is consistent with an older root hash
@@ -164,26 +133,16 @@ impl Client {
             ))
             .query(&query)
             .send()
+            .await?
+            .json::<ApiResponse<ConsistencyProofResponse>>()
             .await?;
 
-        // Parse the response JSON into our ConsistencyProof struct
-        let response = response.json::<serde_json::Value>().await?;
-
-        // Check for error response
-        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
-            let error_msg = response
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error getting consistency proof: {error_msg}"));
+        match response {
+            ApiResponse::Success(data) => Ok(data.proof),
+            ApiResponse::Error { error, .. } => {
+                Err(anyhow::anyhow!("Error getting consistency proof: {error}"))
+            }
         }
-
-        // Parse into our structured ConsistencyProof type
-        let proof = response
-            .get("proof")
-            .ok_or_else(|| anyhow::anyhow!("Missing proof field in response"))?;
-        let proof = serde_json::from_value(proof.clone())?;
-        Ok(proof)
     }
 
     /// Verifies that the current tree state is consistent with a previously observed state.
@@ -228,25 +187,15 @@ impl Client {
             .query(&query)
             .send()
             .await?
-            .json::<serde_json::Value>()
+            .json::<ApiResponse<HasLeafResponse>>()
             .await?;
 
-        // Check for error response
-        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
-            let error_msg = response
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error checking leaf existence: {error_msg}"));
+        match response {
+            ApiResponse::Success(data_) => Ok(data_.exists),
+            ApiResponse::Error { error, .. } => {
+                Err(anyhow::anyhow!("Error checking leaf existence: {error}"))
+            }
         }
-
-        // Extract exists field
-        let exists = response
-            .get("exists")
-            .and_then(serde_json::Value::as_bool)
-            .ok_or_else(|| anyhow::anyhow!("Invalid has_leaf response"))?;
-
-        Ok(exists)
     }
 
     /// Checks if a historical root exists in the log
@@ -265,25 +214,15 @@ impl Client {
             .query(&query)
             .send()
             .await?
-            .json::<serde_json::Value>()
+            .json::<ApiResponse<HasRootResponse>>()
             .await?;
 
-        // Check for error response
-        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
-            let error_msg = response
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error checking root existence: {error_msg}"));
+        match response {
+            ApiResponse::Success(data) => Ok(data.exists),
+            ApiResponse::Error { error, .. } => {
+                Err(anyhow::anyhow!("Error checking root existence: {error}"))
+            }
         }
-
-        // Extract exists field
-        let exists = response
-            .get("exists")
-            .and_then(serde_json::Value::as_bool)
-            .ok_or_else(|| anyhow::anyhow!("Invalid has_root response"))?;
-
-        Ok(exists)
     }
 
     /// Checks if a log exists on the server
@@ -298,24 +237,35 @@ impl Client {
             .get(format!("{}/logs/{}/exists", self.api_base_url, log_name))
             .send()
             .await?
-            .json::<serde_json::Value>()
+            .json::<ApiResponse<HasLogResponse>>()
             .await?;
 
-        // Check for error response
-        if response.get("status").and_then(|v| v.as_str()) == Some("error") {
-            let error_msg = response
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(anyhow::anyhow!("Error checking log existence: {error_msg}"));
+        match response {
+            ApiResponse::Success(data) => Ok(data.exists),
+            ApiResponse::Error { error, .. } => {
+                Err(anyhow::anyhow!("Error checking log existence: {error}"))
+            }
         }
+    }
 
-        // Extract exists field
-        let exists = response
-            .get("exists")
-            .and_then(serde_json::Value::as_bool)
-            .ok_or_else(|| anyhow::anyhow!("Invalid has_log response"))?;
+    /// Gets performance metrics from the server
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
+    /// or if the server returns an error status.
+    pub async fn get_metrics(&self) -> Result<MetricsResponse> {
+        let response = self
+            .http_client
+            .get(format!("{}/metrics", self.api_base_url))
+            .send()
+            .await?
+            .json::<ApiResponse<MetricsResponse>>()
+            .await?;
 
-        Ok(exists)
+        match response {
+            ApiResponse::Success(data) => Ok(data),
+            ApiResponse::Error { error, .. } => Err(anyhow::anyhow!("Error getting metrics: {error}")),
+        }
     }
 }

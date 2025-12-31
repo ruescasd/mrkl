@@ -183,12 +183,6 @@ client
 
 #### Step 3: Attaching a verification source to a verification log
 
-Your source table(s) must have:
-- An **id column** - [Unique](#source-table-id-column), total order identifier (typically `BIGSERIAL PRIMARY KEY`)
-- A **hash column** - Pre-computed SHA256 hash (`BYTEA NOT NULL`)
-It can optionally also have:
-- A **timestamp_column** - timestamp for chronological ordering (`TIMESTAMPTZ`)
-
 ```rust
 // Register source table with the log
 client
@@ -501,10 +495,11 @@ The lint configuration is relatively strict, it can be found in `Cargo.toml`.
 
 #### Batch processor optimization
 
-The batch processor's primary bottleneck is PostgreSQL connection and query overhead, 
+The batch processor's primary bottleneck is PostgreSQL inserts and and queries, 
 not in-memory merkle tree operations (which usually complete in under 1ms). In a high insert rate scenario, the number of copied rows per batch can be large, which can benefit from
 * Multi-row INSERTs: The processor uses batch INSERTs instead of individual row inserts, 
   achieving a 10x performance improvement
+    * TODO: consider postgresql COPY for even greater (though probably marginal) improvement
 
 #### `merkle_log` fetches
 
@@ -534,8 +529,8 @@ Whereas the batch processor is a serial process that runs over one second (by de
 intervals, HTTP endpoints can be accessed concurrently by large numbers of users. HTTP
 endpoint performance benefits from:
 * No database access: do not interact with the database from any HTTP endpoints
-* O(1) historical root and leaf: use separate hashmaps for this data
-* No rewinding on merkle trees: do not offer any endpoint that requires rewinding trees, since that is a potentially expensive operation. All other merkle tree computations resulting from HTTP requests should be fast.
+* O(1) historical root and leaf access: use separate hashmaps for this data
+* No rewinding on merkle trees: do not offer any endpoint that requires rewinding trees, since that is a potentially expensive operation.
 
 #### Load Testing
 
@@ -544,7 +539,7 @@ create entries. Together with the `dashboard` binary this can be used to measure
 performance under load.
 
 ```bash
-# 1000 entries per cycle, spread across 3 sources per log
+# Insert 1000 entries per cycle, spread across 3 sources per log
 cargo run --bin load --release -- --rows-per-interval 1000 --num-sources 3
 ```
 

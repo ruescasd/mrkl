@@ -19,92 +19,10 @@ use crossterm::{
     cursor, execute,
     terminal::{self, ClearType},
 };
-use serde::Deserialize;
-use std::collections::HashMap;
+use mrkl::service::Client;
+use mrkl::service::responses::MetricsResponse;
 use std::io::{Write, stdout};
 use std::time::Duration;
-
-/// Response from the metrics API endpoint.
-#[derive(Debug, Deserialize)]
-struct MetricsResponse {
-    /// Per-log metrics, keyed by log name.
-    logs: HashMap<String, LogMetrics>,
-    /// Global system metrics.
-    global: GlobalMetrics,
-}
-
-/// Metrics for a single log.
-#[derive(Debug, Deserialize)]
-struct LogMetrics {
-    /// Number of rows processed in the last batch.
-    last_batch_rows: u64,
-    /// Number of leaves added to the tree in the last batch.
-    last_batch_leaves: u64,
-    /// Total duration of the last batch in milliseconds.
-    last_total_ms: u64,
-    /// Duration of the copy operation in the last batch in milliseconds.
-    last_copy_ms: u64,
-    /// Duration of querying sources in the last batch in milliseconds.
-    last_query_sources_ms: u64,
-    /// Duration of inserting into `merkle_log` in the last batch in milliseconds.
-    last_insert_merkle_log_ms: u64,
-    /// Duration of fetching from `merkle_log` in the last batch in milliseconds.
-    last_fetch_merkle_log_ms: u64,
-    /// Duration of updating the tree in the last batch in milliseconds.
-    last_tree_update_ms: u64,
-    /// Current size of the merkle tree (number of leaves).
-    tree_size: u64,
-    /// Memory usage of the tree in bytes.
-    tree_memory_bytes: u64,
-    /// Timestamp of the last update.
-    last_update: String,
-}
-
-/// Global system metrics.
-#[derive(Debug, Deserialize)]
-struct GlobalMetrics {
-    /// Duration of the last processor cycle in milliseconds.
-    last_cycle_duration_ms: u64,
-    /// Number of logs that had data to process in the last cycle.
-    last_active_log_count: usize,
-    /// Fraction of time spent processing vs sleeping in the last cycle.
-    last_cycle_fraction: f64,
-}
-
-/// Response from the API, tagged by success status.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "status", rename_all = "lowercase")]
-enum ApiResponse {
-    /// Successful response with metrics data.
-    #[serde(rename = "ok")]
-    Ok {
-        /// Per-log metrics.
-        logs: HashMap<String, LogMetrics>,
-        /// Global system metrics.
-        global: GlobalMetrics,
-    },
-    /// Error response.
-    Error {
-        /// Error message.
-        error: String,
-    },
-}
-
-/// Fetches metrics from the API endpoint.
-async fn fetch_metrics(url: &str) -> Result<MetricsResponse> {
-    let response = reqwest::get(url).await?;
-    let text = response.text().await?;
-
-    let api_response: ApiResponse = serde_json::from_str(&text)?;
-
-    match api_response {
-        ApiResponse::Ok { logs, global } => {
-            // eprintln!("Parsed {} logs", logs.len());
-            Ok(MetricsResponse { logs, global })
-        }
-        ApiResponse::Error { error } => Err(anyhow::anyhow!("API error: {error}")),
-    }
-}
 
 /// Formats a number with K/M suffixes for readability.
 fn format_number(n: u64) -> String {
@@ -221,7 +139,6 @@ async fn main() -> Result<()> {
     // Get server URL from environment or use default
     let server_url =
         std::env::var("MRKL_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
-    let metrics_url = format!("{server_url}/metrics");
 
     // Refresh interval in seconds
     let refresh_interval = std::env::var("MRKL_DASHBOARD_REFRESH_INTERVAL")
@@ -229,14 +146,17 @@ async fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
 
-    println!("Connecting to {metrics_url}...");
+    println!("Connecting to {server_url}...");
     println!("Refresh interval: {refresh_interval}s");
     println!();
+
+    // Create client
+    let client = Client::new(&server_url)?;
 
     // No raw mode - allows normal terminal interactions (text selection, etc.)
 
     loop {
-        match fetch_metrics(&metrics_url).await {
+        match client.get_metrics().await {
             Ok(metrics) => {
                 if let Err(e) = display_metrics(&metrics, refresh_interval) {
                     eprintln!("Display error: {e}");
@@ -248,7 +168,7 @@ async fn main() -> Result<()> {
                     terminal::Clear(ClearType::All),
                     cursor::MoveTo(0, 0)
                 )?;
-                println!("⚠️  Failed to fetch metrics: {e}");
+                println!("⚠️ Failed to fetch metrics: {e}");
                 println!("Retrying in {refresh_interval}s...");
                 println!("\nPress Ctrl+C to exit");
             }
