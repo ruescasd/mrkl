@@ -1,6 +1,24 @@
 # mrkl
 
-Verifiable logs for Postgresql tables
+Verifiable logs for PostgreSQL tables
+
+## What is this?
+
+mrkl provides **tamper-evident append-only logs** for PostgreSQL tables using the same cryptographic primitives as [Certificate Transparency](https://certificate.transparency.dev/howctworks/).
+
+**How it works**: Configure source tables as "verifiable logs" - mrkl continuously copies entries to a committed order in `merkle_log`, building Merkle trees in memory. Clients can request:
+- **Inclusion proofs** - verify an entry exists in the log
+- **Consistency proofs** - verify the log only appended (no deletions/modifications)S
+
+**Security properties** (see [RFC 6962](https://datatracker.ietf.org/doc/html/rfc6962)):
+- ✅ Tamper detection - any modification invalidates cryptographic proofs
+- ✅ Append-only guarantee - consistency proofs catch deletions or reordering
+- ✅ Independent verifiability - clients verify proofs without trusting the operator
+- ✅ Efficient auditing - verify without downloading entire log
+
+**Out of scope**:
+- ❌ Tamper prevention (database access control is your responsibility)
+- ❌ Gossip protocol or split-view protection (no distributed monitors yet)
 
 ## Quickstart Tutorial
 
@@ -292,11 +310,8 @@ this id is _part_ of a composite unique constraint.
 If ids are not unique, entries with duplicate ids could be skipped - if a row with id=5 is processed, 
 any other rows with id=5 inserted later will never be picked up by subsequent batches.
 
-**Performance benefit**: Both `PRIMARY KEY` and `UNIQUE` constraints automatically create an index 
-on the column, which ensures efficient batch processing queries.
-
-The validation tool (`cargo run --bin main -- --verify-db`) will check both uniqueness and 
-indexing requirements.
+The validation tool (`cargo run --bin main -- --verify-db`) will check for the required 
+uniqueness constraint.
 
 ### Tiered ordering
 
@@ -309,6 +324,17 @@ Entries are ordered by: `(Option<Timestamp>, source_id, source_table)`
 Verifiable logs are implemented following this ordering, but this is not dependable guarantee: the service only guarantees that _an_ order is followed and that the resulting trees will be consistent.
 The use of a timestamp column helps in providing a more "natural" order when a verification
 log has more than one source; in this case an ordering based only on id columns has no meaning.
+
+### Batch processing atomicity
+
+The batch processor ensures per-log all-or-nothing semantics:
+
+**Transaction scope**: Each log's batch processes all its configured source tables within a single database transaction. This means:
+- If any error occurs while processing a log, that log's batch rolls back
+- No partial state is ever committed to `merkle_log` for that log
+- Either all source tables for a log are processed together, or none are
+
+**Independent log processing**: Logs are processed independently - an error in one log does not affect other logs being processed in the same cycle.
 
 ## API Reference
 
@@ -473,25 +499,43 @@ The lint configuration is relatively strict, it can be found in `Cargo.toml`.
 
 ### Performance
 
-#### General considerations
+#### Batch processor optimization
 
-##### Source table contention
+The batch processor's primary bottleneck is PostgreSQL connection and query overhead, 
+not in-memory merkle tree operations (which usually complete in under 1ms). In a high insert rate scenario, the number of copied rows per batch can be large, which can benefit from
+* Multi-row INSERTs: The processor uses batch INSERTs instead of individual row inserts, 
+  achieving a 10x performance improvement
+
+#### `merkle_log` fetches
+
+Fetch performance on `merkle_log` benefits from a composite index on `(log_name, id)`:
+
+* **Startup rebuild**: `WHERE log_name = ? ORDER BY id` (loads all entries for each log)
+* **Last processed tracking**: `WHERE log_name = ? AND source_table = ?` (finds last processed ID per source)
+
+This index is created automatically by the setup script.
+
+#### Source table contention
 
 Contention for source tables can be minimized with
 * Appropriate transaction isolation levels: use Read Committed (the default) in the batch processor
-* Appropriate indices on source tables: use an index on the id column.
+* Appropriate indices on source tables: the id column [should](#source-table-id-column) have a unique or primary key constraint on it, which automatically creates an index.
 
-##### `merkle_log` fetches
-
-Fetch performance on `merkle_log` benefits from
-
-* Appropriate indices: use an index on (id, logname)
-
-##### Merkle tree lock contention
+#### Merkle tree lock contention
 
 Contention for merkle trees can be minimized with
 * A concurrent hashmap: use Dashmap to store logs indexed by name
 * Minimize locking scope: release the RwLock as soon as possible
+    * TODO: could use read, clone, update and then write, to perform the tree updates outside of the lock, but this is not necessary at the moment.
+
+#### HTTP endpoints
+
+Whereas the batch processor is a serial process that runs over one second (by default)
+intervals, HTTP endpoints can be accessed concurrently by large numbers of users. HTTP
+endpoint performance benefits from:
+* No database access: do not interact with the database from any HTTP endpoints
+* O(1) historical root and leaf: use separate hashmaps for this data
+* No rewinding on merkle trees: do not offer any endpoint that requires rewinding trees, since that is a potentially expensive operation. All other merkle tree computations resulting from HTTP requests should be fast.
 
 #### Load Testing
 
@@ -503,6 +547,10 @@ performance under load.
 # 1000 entries per cycle, spread across 3 sources per log
 cargo run --bin load --release -- --rows-per-interval 1000 --num-sources 3
 ```
+
+#### Typical performance numbers
+
+TODO
 
 ## Acknowledgments
 

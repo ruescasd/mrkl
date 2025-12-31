@@ -31,8 +31,8 @@ pub struct ColumnValidation {
     pub expected_type: String,
     /// Whether the actual type matches the expected type
     pub type_matches: bool,
-    /// Whether the column has an index (only checked for id columns)
-    pub indexed: Option<bool>,
+    /// Whether the column has a uniqueness constraint (PRIMARY KEY or UNIQUE) (only checked for id columns)
+    pub unique: Option<bool>,
 }
 
 /// Validation result for a single log
@@ -51,7 +51,7 @@ impl SourceValidation {
     ///
     /// A source is valid if:
     /// - The table exists
-    /// - The ID column exists and has the correct type
+    /// - The ID column exists, has the correct type, and is unique
     /// - The hash column exists and has the correct type
     /// - The timestamp column (if required) exists and has the correct type
     #[must_use]
@@ -60,7 +60,7 @@ impl SourceValidation {
             && self
                 .id_column_valid
                 .as_ref()
-                .is_some_and(|v| v.type_matches)
+                .is_some_and(|v| v.type_matches && v.unique == Some(true))
             && self
                 .hash_column_valid
                 .as_ref()
@@ -93,9 +93,9 @@ impl SourceValidation {
                     col.data_type.as_ref().unwrap_or(&"unknown".to_string()),
                     col.expected_type
                 ));
-            } else if matches!(col.indexed, Some(false)) {
+            } else if matches!(col.unique, Some(false)) {
                 errors.push(format!(
-                    "ID column '{}' should be indexed for performance (add PRIMARY KEY, UNIQUE constraint, or explicit index)",
+                    "ID column '{}' MUST have a uniqueness constraint (PRIMARY KEY or UNIQUE)",
                     col.column_name
                 ));
             }
@@ -251,30 +251,30 @@ async fn validate_source(
     }
 
     // Validate columns
-    let id_col_validation = validate_column_with_index_check(
+    let id_col_validation = validate_column_with_constraints(
         conn,
         source_table,
         id_column,
         &["bigint", "integer", "smallint", "numeric"],
-        true, // Check for index on id column
+        true, // Check uniqueness on id column
     )
     .await?;
-    let hash_col_validation = validate_column_with_index_check(
+    let hash_col_validation = validate_column_with_constraints(
         conn,
         source_table,
         hash_column,
         &["bytea"],
-        false, // No index check for hash column
+        false, // No uniqueness check for hash column
     )
     .await?;
     let timestamp_col_validation = if let Some(ts_col) = timestamp_column {
         Some(
-            validate_column_with_index_check(
+            validate_column_with_constraints(
                 conn,
                 source_table,
                 ts_col,
                 &["timestamp without time zone", "timestamp with time zone"],
-                false, // No index check for timestamp column
+                false, // No uniqueness check for timestamp column
             )
             .await?,
         )
@@ -294,13 +294,13 @@ async fn validate_source(
 
 /// Validates a single column exists and has acceptable type
 /// 
-/// If `check_index` is true, also verifies the column has an index.
-async fn validate_column_with_index_check(
+/// If `check_unique` is true, verifies the column has a uniqueness constraint.
+async fn validate_column_with_constraints(
     conn: &PooledConnection,
     table_name: &str,
     column_name: &str,
     expected_types: &[&str],
-    check_index: bool,
+    check_unique: bool,
 ) -> Result<ColumnValidation> {
     // Query column information
     let row_opt = conn
@@ -329,9 +329,9 @@ async fn validate_column_with_index_check(
             .iter()
             .any(|&expected| actual_type.eq_ignore_ascii_case(expected));
 
-        // Check for index if requested
-        let indexed = if check_index {
-            Some(check_column_indexed(conn, table_name, column_name).await?)
+        // Check for uniqueness constraint if requested
+        let unique = if check_unique {
+            Some(check_column_unique(conn, table_name, column_name).await?)
         } else {
             None
         };
@@ -342,7 +342,7 @@ async fn validate_column_with_index_check(
             data_type: Some(actual_type.clone()),
             expected_type: expected_types.join(" or "),
             type_matches,
-            indexed,
+            unique,
         })
     } else {
         Ok(ColumnValidation {
@@ -351,37 +351,38 @@ async fn validate_column_with_index_check(
             data_type: None,
             expected_type: expected_types.join(" or "),
             type_matches: false,
-            indexed: None,
+            unique: None,
         })
     }
 }
 
-/// Checks if a column has an index on it
+/// Checks if a column has a uniqueness constraint (PRIMARY KEY or UNIQUE)
 /// 
-/// Returns true if the column is indexed (via PRIMARY KEY, UNIQUE constraint, or explicit index)
-async fn check_column_indexed(
+/// Returns true if the column has a PRIMARY KEY or UNIQUE constraint on it alone
+async fn check_column_unique(
     conn: &PooledConnection,
     table_name: &str,
     column_name: &str,
 ) -> Result<bool> {
-    // Query pg_indexes to find indexes that include this column
-    // Checks for: single-column indexes, or multi-column indexes where this column is first
-    let indexed: bool = conn
+    // Query pg_constraint to check for PRIMARY KEY or UNIQUE constraints
+    let unique: bool = conn
         .query_one(
             "SELECT EXISTS (
                 SELECT 1
-                FROM pg_indexes
-                WHERE schemaname = 'public'
-                  AND tablename = $1
-                  AND (indexdef LIKE '%(' || $2 || ')%'
-                       OR indexdef LIKE '%(' || $2 || ',%')
+                FROM pg_constraint con
+                JOIN pg_class rel ON rel.oid = con.conrelid
+                JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                WHERE nsp.nspname = 'public'
+                  AND rel.relname = $1
+                  AND con.contype IN ('p', 'u')
+                  AND con.conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = rel.oid AND attname = $2)]
             )",
             &[&table_name, &column_name],
         )
         .await?
         .get(0);
 
-    Ok(indexed)
+    Ok(unique)
 }
 
 /// Pretty-prints validation results
