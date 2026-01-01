@@ -171,29 +171,79 @@ async fn setup_test_environment(
     Ok(())
 }
 
-/// Insert rows into a source table
+/// Insert rows into a source table using multi-row INSERT for performance
 async fn insert_rows(
     client: &tokio_postgres::Client,
     table_name: &str,
     count: u32,
     counter: &mut u64,
 ) -> Result<u32> {
-    for _ in 0..count {
-        *counter += 1;
-        let data = format!("entry_{counter}");
-        let hash = compute_hash(&data);
-
-        client
-            .execute(
-                &format!(
-                    "INSERT INTO {table_name} (data, hash, created_at) VALUES ($1, $2, $3)"
-                ),
-                &[&data, &hash, &Utc::now()],
-            )
-            .await?;
+    if count == 0 {
+        return Ok(0);
     }
 
-    Ok(count)
+    // PostgreSQL has a limit of ~65535 parameters per query
+    // With 3 columns per row, we can safely do ~21000 rows per query
+    // Use 1000 as a conservative chunk size
+    const CHUNK_SIZE: u32 = 1000;
+
+    let mut total_inserted = 0;
+    let mut remaining = count;
+
+    while remaining > 0 {
+        let batch_size = remaining.min(CHUNK_SIZE);
+        
+        // Prepare data for this batch
+        let mut values_clauses = Vec::with_capacity(batch_size as usize);
+        let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::with_capacity((batch_size * 3) as usize);
+        
+        // Build data vectors
+        let mut data_vec = Vec::with_capacity(batch_size as usize);
+        let mut hash_vec = Vec::with_capacity(batch_size as usize);
+        let mut timestamp_vec = Vec::with_capacity(batch_size as usize);
+        
+        for i in 0..batch_size {
+            *counter += 1;
+            let data = format!("entry_{counter}");
+            let hash = compute_hash(&data);
+            let timestamp = Utc::now();
+            
+            data_vec.push(data);
+            hash_vec.push(hash);
+            timestamp_vec.push(timestamp);
+            
+            // Build VALUES clause: ($1, $2, $3), ($4, $5, $6), ...
+            let param_offset = (i * 3) + 1;
+            values_clauses.push(format!(
+                "(${}, ${}, ${})",
+                param_offset,
+                param_offset + 1,
+                param_offset + 2
+            ));
+        }
+        
+        // Build params vector (need references with correct lifetime)
+        for i in 0..batch_size as usize {
+            params.push(data_vec.get(i).expect("data_vec.len() == batch_size"));
+            params.push(hash_vec.get(i).expect("hash_vec.len() == batch_size"));
+            params.push(timestamp_vec.get(i).expect("timestamp_vec.len() == batch_size"));
+        }
+        
+        // Construct multi-row INSERT query
+        let query = format!(
+            "INSERT INTO {} (data, hash, created_at) VALUES {}",
+            table_name,
+            values_clauses.join(", ")
+        );
+        
+        // Execute the batch insert
+        client.execute(&query, &params).await?;
+        
+        total_inserted += batch_size;
+        remaining -= batch_size;
+    }
+
+    Ok(total_inserted)
 }
 
 /// Compute SHA-256 hash of data

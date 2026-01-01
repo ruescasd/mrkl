@@ -545,7 +545,36 @@ cargo run --bin load --release -- --rows-per-interval 1000 --num-sources 3
 
 #### Typical performance numbers
 
-TODO
+##### Hardware 1
+
+`cargo run --bin load --release -- --rows-per-interval 1000 --num-sources 3`
+
+    Cycle: 146ms
+    
+    TOTAL    COPY    QUERY   INSERT    FETCH     TREE
+    64       60        6       39        1        1
+    45       41        3       30        1        1
+    37       34        3       24        1        1
+
+`cargo run --bin load --release -- --rows-per-interval 5000 --num-sources 3`
+
+    Cycle: 828ms
+
+    TOTAL    COPY    QUERY   INSERT    FETCH     TREE
+    311      290       13      255        7       12
+    297      276        9      245        6       12
+    206      186        8      165        6       13
+
+`cargo run --bin load --release -- --rows-per-interval 10000 --num-sources 3`
+    
+    Cycle: 1591ms
+    
+    TOTAL    COPY    QUERY   INSERT    FETCH     TREE
+    535      478       23      439       13       42
+    563      507       15      483       12       42
+    498      438       14      412       13       46
+
+##### Hardware 2
 
 ## Acknowledgments
 

@@ -303,8 +303,6 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
             let hash: Vec<u8> = row.get("leaf_hash");
             let leaf_hash = LeafHash::new(hash);
 
-            // we must checkpoint after each addition, because in a rebuild 
-            // scenario we do not know which roots have been published
             merkle_state.update_with_entry(leaf_hash, id);
         }
         let tree_duration = tree_start.elapsed();
@@ -359,7 +357,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
 /// When using bulk inserts, we process in chunks to avoid postgresql parameter limit 
 /// This limit is ~32K (probably 32,767) parameters (= ~6.5K rows × 5 params)
 /// 1000 rows × 5 params = 5000 parameters (well under limit)
-const CHUNK_SIZE: usize = 1000;
+const CHUNK_SIZE: usize = 3000;
 
 /// Process a batch of rows from configured source tables into `merkle_log` for a specific log
 /// 
