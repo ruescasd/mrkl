@@ -16,6 +16,7 @@ use serial_test::serial;
 
 mod test_client;
 use test_client::TestClient;
+use tokio::time::sleep;
 
 async fn setup_client() -> Result<TestClient> {
     // Load environment variables from .env file
@@ -196,6 +197,7 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
 #[tokio::test]
 async fn test_has_log() -> Result<()> {
     let client = setup_client().await?;
+    sleep(std::time::Duration::from_secs(1)).await;
 
     println!("\n🧪 Testing has_log endpoint...");
 

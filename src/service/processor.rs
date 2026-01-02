@@ -267,7 +267,9 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
     let copy_start = std::time::Instant::now();
 
     // Copy pending entries into merkle_log
-    let batch_stats = copy_source_rows(app_state, log_name, batch_size).await?;
+    
+    // let batch_stats = copy_source_rows(app_state, log_name, batch_size).await?;
+    let batch_stats = copy_source_rows_db(app_state, log_name, batch_size).await?;
 
     let copy_duration = copy_start.elapsed();
 
@@ -358,6 +360,168 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
 /// This limit is ~32K (probably 32,767) parameters (= ~6.5K rows × 5 params)
 /// 1000 rows × 5 params = 5000 parameters (well under limit)
 const CHUNK_SIZE: usize = 3000;
+
+/// Database-native version of copy_source_rows using pure SQL with CTE and UNION ALL
+/// 
+/// This version eliminates network overhead by performing the entire copy operation
+/// within the database using a single query. All source tables are combined with
+/// UNION ALL, ordered according to the Rust ordering semantics, and inserted directly
+/// into `merkle_log`.
+/// 
+/// Returns statistics about the batch processing operation
+async fn copy_source_rows_db(
+    app_state: &AppState,
+    log_name: &str,
+    batch_size: u32,
+) -> Result<BatchStats> {
+    let mut conn = app_state.db_pool.get().await?;
+    
+    // Load source configurations from database for this log
+    let source_configs = load_source_configs(&conn, log_name).await?;
+    
+    if source_configs.is_empty() {
+        return Ok(BatchStats {
+            rows_copied: 0,
+            query_sources_ms: 0,
+            insert_merkle_log_ms: 0,
+        });
+    }
+    
+    // Filter to only tables that actually exist
+    let valid_configs = get_valid_source_tables(&conn, &source_configs).await?;
+    
+    if valid_configs.is_empty() {
+        return Ok(BatchStats {
+            rows_copied: 0,
+            query_sources_ms: 0,
+            insert_merkle_log_ms: 0,
+        });
+    }
+    
+    let txn = conn.transaction().await?;
+    
+    // Advisory lock prevents concurrent execution for this specific log
+    let lock_id = hash_string_to_i64(log_name);
+    let lock_acquired: bool = txn
+        .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&lock_id])
+        .await?
+        .get(0);
+    
+    if !lock_acquired {
+        return Err(anyhow::anyhow!(
+            "Another processing batch is running for log '{log_name}'"
+        ));
+    }
+    
+    // Time the query preparation phase (getting last processed IDs)
+    let query_start = std::time::Instant::now();
+    
+    // Build UNION ALL query dynamically for all source tables
+    // Each source table needs its own LIMIT to avoid fetching unbounded rows
+    let mut union_parts = Vec::new();
+    let mut param_values: Vec<i64> = Vec::new();
+    
+    for config in &valid_configs {
+        // Get last processed source_id for this specific source table in this log
+        // NOTE: This query benefits from an index on (log_name, source_table, source_id DESC)
+        let last_processed: i64 = txn
+            .query_one(
+                "SELECT COALESCE(MAX(source_id), 0) FROM merkle_log WHERE log_name = $1 AND source_table = $2",
+                &[&log_name, &config.table_name],
+            )
+            .await?
+            .get(0);
+        
+        param_values.push(last_processed);
+        let last_processed_idx = param_values.len();
+        
+        // Add batch_size as a parameter for this source's LIMIT
+        param_values.push(i64::from(batch_size * 5));
+        let limit_idx = param_values.len();
+        
+        // Build SELECT with LIMIT per source table to cap rows fetched
+        // The LIMIT ensures we don't fetch unbounded rows from source tables
+        // NOTE: Wrapped in parentheses because ORDER BY/LIMIT in UNION requires it
+        let select = if let Some(ref ts_col) = config.timestamp_column {
+            format!(
+                "(SELECT {} AS source_id, {} AS leaf_hash, {} AS timestamp_col, '{}' AS source_table \
+                 FROM {} WHERE {} > ${} ORDER BY {} LIMIT ${})",
+                config.id_column, config.hash_column, ts_col,
+                config.table_name, config.table_name, config.id_column, last_processed_idx,
+                config.id_column, limit_idx
+            )
+        } else {
+            format!(
+                "(SELECT {} AS source_id, {} AS leaf_hash, NULL::timestamptz AS timestamp_col, '{}' AS source_table \
+                 FROM {} WHERE {} > ${} ORDER BY {} LIMIT ${})",
+                config.id_column, config.hash_column,
+                config.table_name, config.table_name, config.id_column, last_processed_idx,
+                config.id_column, limit_idx
+            )
+        };
+        
+        union_parts.push(select);
+    }
+    
+    let query_duration = query_start.elapsed();
+    
+    // Time the main CTE + INSERT operation
+    let insert_start = std::time::Instant::now();
+    
+    // Build the full query with CTE, ordering (matching Rust semantics), and INSERT
+    // ORDER BY: timestamp NULLS LAST (timestamped entries first), then source_id, then source_table
+    // This matches the Rust SourceRow Ord implementation
+    //
+    // IMPORTANT: We use DEFAULT for id column, letting PostgreSQL's SERIAL sequence assign IDs.
+    // This avoids a full table scan from SELECT MAX(id) which would grow O(n) with table size.
+    // The SERIAL sequence is O(1) regardless of table size.
+    let query = format!(
+        "WITH combined AS (
+            {}
+        ),
+        ordered AS (
+            SELECT 
+                source_id,
+                leaf_hash,
+                source_table
+            FROM combined
+            ORDER BY timestamp_col NULLS LAST, source_id, source_table
+            LIMIT ${}
+        )
+        INSERT INTO merkle_log (log_name, source_table, source_id, leaf_hash)
+        SELECT 
+            ${},
+            source_table,
+            source_id,
+            leaf_hash
+        FROM ordered",
+        union_parts.join(" UNION ALL "),
+        param_values.len() + 1,  // batch_size for final LIMIT
+        param_values.len() + 2   // log_name parameter
+    );
+    
+    // Prepare all parameters
+    let mut all_params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+    for p in &param_values {
+        all_params.push(p);
+    }
+    
+    let batch_size_i64 = i64::from(batch_size * 5);
+    all_params.push(&batch_size_i64);
+    all_params.push(&log_name);
+    
+    let rows_affected = txn.execute(&query, &all_params).await?;
+    
+    let insert_duration = insert_start.elapsed();
+    
+    txn.commit().await?;
+    
+    Ok(BatchStats {
+        rows_copied: rows_affected,
+        query_sources_ms: u64_millis(query_duration.as_millis()),
+        insert_merkle_log_ms: u64_millis(insert_duration.as_millis()),
+    })
+}
 
 /// Process a batch of rows from configured source tables into `merkle_log` for a specific log
 /// 

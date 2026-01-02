@@ -103,6 +103,11 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
 
         -- Index for querying a specific log's entries in order
         CREATE INDEX IF NOT EXISTS idx_merkle_log_by_log ON merkle_log(log_name, id);
+
+        -- Index for efficient MAX(source_id) lookups per (log_name, source_table)
+        -- Used by batch processor to find last processed source_id for each source
+        -- CREATE INDEX IF NOT EXISTS idx_merkle_log_source_max 
+        --    ON merkle_log(log_name, source_table, source_id DESC);
     "#,
         )
         .await?;
