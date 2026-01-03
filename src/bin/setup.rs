@@ -1,6 +1,6 @@
-//! Database setup utility for mrkl
+//! Database setup utility for Trellis
 //!
-//! Creates the necessary `PostgreSQL` tables for mrkl operation.
+//! Creates the necessary `PostgreSQL` tables for Trellis operation.
 //! The schema includes `verification_logs` and `verification_sources` tables.
 //! 
 //! Note: Per-log merkle tables (`merkle_log_{log_name}`) are created dynamically

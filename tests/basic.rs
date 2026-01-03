@@ -1,4 +1,4 @@
-//! Integration tests for mrkl core functionality
+//! Integration tests for trellis core functionality
 //!
 //! Tests the complete workflow including database operations, merkle tree building,
 //! proof generation and verification. Uses `serial_test` to ensure tests run

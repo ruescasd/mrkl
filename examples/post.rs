@@ -15,7 +15,7 @@
 
 use anyhow::Result;
 use base64::Engine;
-use mrkl::service::Client;
+use trellis::service::Client;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio_postgres::NoTls;
@@ -29,10 +29,10 @@ const SOURCE_TABLE: &str = "example_post_source";
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
-    println!("=== MRKL Post & Verify Example ===\n");
+    println!("=== Trellis Post & Verify Example ===\n");
 
     let server_url =
-        std::env::var("MRKL_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
+        std::env::var("TRELLIS_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
     // Step 1: Setup - Create database connection and ensure log exists
     println!("📋 Setting up test environment...");

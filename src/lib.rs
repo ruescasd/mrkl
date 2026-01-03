@@ -1,4 +1,4 @@
-//! MRKL - PostgreSQL-integrated Merkle Tree Verification Service
+//! Trellis - PostgreSQL-integrated Merkle Tree Verification Service
 //!
 //! This crate provides an addon service to existing postgresql database that
 //! maintains multiple independent Certificate Transparency-style merkle logs. It enables

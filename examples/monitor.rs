@@ -19,7 +19,7 @@
 
 use anyhow::Result;
 use base64::Engine;
-use mrkl::service::Client;
+use trellis::service::Client;
 use std::time::Duration;
 
 /// Represents a snapshot of a merkle log's state at a point in time.
@@ -35,7 +35,7 @@ struct LogState {
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
-    println!("=== MRKL Consistency Monitor ===\n");
+    println!("=== Trellis Consistency Monitor ===\n");
 
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
 
     // Configuration
     let server_url =
-        std::env::var("MRKL_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
+        std::env::var("TRELLIS_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
     let poll_interval_secs: u64 = std::env::var("MONITOR_INTERVAL")
         .ok()
         .and_then(|s| s.parse().ok())

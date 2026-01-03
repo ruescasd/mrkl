@@ -1,4 +1,4 @@
-//! Main server binary for mrkl
+//! Main server binary for Trellis
 //!
 //! Runs the HTTP API server and batch processor that monitors `PostgreSQL` tables
 //! and builds merkle trees for Certificate Transparency-style verification.
@@ -15,7 +15,7 @@
 //! The `--verify-db` flag validates the database schema without starting the server.
 
 use anyhow::Result;
-use mrkl::service;
+use trellis::service;
 use std::str::FromStr;
 use std::net::SocketAddr;
 
@@ -45,11 +45,11 @@ async fn main() -> Result<()> {
         service::print_validation_report(&validations);
 
         // Exit with status code based on validation result
-        let all_valid = validations.iter().all(mrkl::service::LogValidation::is_valid);
+        let all_valid = validations.iter().all(trellis::service::LogValidation::is_valid);
         std::process::exit(i32::from(!all_valid));
     }
 
-    let addr_string = std::env::var("MRKL_SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    let addr_string = std::env::var("TRELLIS_SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     let addr = SocketAddr::from_str(&addr_string)?;
 
     // Run the complete server with batch processing

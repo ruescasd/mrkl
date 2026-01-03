@@ -1,6 +1,6 @@
-//! Real-time metrics dashboard for mrkl
+//! Real-time metrics dashboard for Trellis
 //!
-//! A terminal-based dashboard that displays live metrics from the mrkl server,
+//! A terminal-based dashboard that displays live metrics from the Trellis server,
 //! including per-log processing statistics and global system metrics.
 //!
 #![allow(clippy::pedantic)]
@@ -21,8 +21,8 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEvent},
     terminal::{self, ClearType},
 };
-use mrkl::service::Client;
-use mrkl::service::responses::MetricsResponse;
+use trellis::service::Client;
+use trellis::service::responses::MetricsResponse;
 use std::collections::{HashMap, VecDeque};
 use std::io::{Write, stdout};
 use std::time::Duration;
@@ -315,10 +315,10 @@ async fn main() -> Result<()> {
 
     // Get server URL from environment or use default
     let server_url =
-        std::env::var("MRKL_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
+        std::env::var("TRELLIS_SERVER_URL").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
     // Refresh interval in seconds
-    let refresh_interval = std::env::var("MRKL_DASHBOARD_REFRESH_INTERVAL")
+    let refresh_interval = std::env::var("TRELLIS_DASHBOARD_REFRESH_INTERVAL")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);

@@ -1,6 +1,6 @@
-//! Integration tests for the mrkl HTTP client
+//! Integration tests for the Trellis HTTP client
 //!
-//! Tests the Client API for interacting with the mrkl server, including
+//! Tests the Client API for interacting with the Trellis server, including
 //! proof requests, verification, and error handling.
 #![allow(clippy::pedantic)]
 #![allow(clippy::print_stdout)]
@@ -8,7 +8,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use anyhow::Result;
-use mrkl::service::Client;
+use trellis::service::Client;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio_postgres::NoTls;

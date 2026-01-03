@@ -1,7 +1,7 @@
-//! Load generator for testing mrkl under realistic conditions
+//! Load generator for testing Trellis under realistic conditions
 //!
 //! Simulates a high-throughput application by continuously inserting entries
-//! into a test table that mrkl monitors. Uses direct database access.
+//! into a test table that Trellis monitors. Uses direct database access.
 //!
 #![allow(clippy::pedantic)]
 #![allow(clippy::print_stdout)]
@@ -20,10 +20,10 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tokio_postgres::NoTls;
 
-/// Load generator for testing mrkl under realistic conditions
+/// Load generator for testing Trellis under realistic conditions
 #[derive(Parser, Debug)]
 #[command(name = "load")]
-#[command(about = "Generate continuous load for mrkl testing", long_about = None)]
+#[command(about = "Generate continuous load for Trellis testing", long_about = None)]
 struct Args {
     /// Number of rows to insert per interval
     #[arg(short, long, default_value_t = 100)]
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     // Configuration from command line arguments
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
-    println!("=== MRKL Load Generator ===");
+    println!("=== Trellis Load Generator ===");
     println!("Rows per interval: {}", args.rows_per_interval);
     println!("Interval: {}s", args.interval_secs);
     println!("Number of logs: {}", args.num_logs);

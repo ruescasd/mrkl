@@ -1,12 +1,12 @@
-# mrkl
+# Trellis
 
 Verifiable logs for PostgreSQL tables
 
 ## What is this?
 
-mrkl provides **tamper-evident append-only logs** for PostgreSQL tables using the same cryptographic primitives as [Certificate Transparency](https://certificate.transparency.dev/howctworks/).
+Trellis provides **tamper-evident append-only logs** for PostgreSQL tables using the same cryptographic primitives as [Certificate Transparency](https://certificate.transparency.dev/howctworks/).
 
-**How it works**: Configure source tables as "verifiable logs" - mrkl continuously copies entries to per-log tables (`merkle_log_{log_name}`), building Merkle trees in memory. Clients can request:
+**How it works**: Configure source tables as "verifiable logs" - Trellis continuously copies entries to per-log tables (`merkle_log_{log_name}`), building Merkle trees in memory. Clients can request:
 - **Inclusion proofs** - verify an entry exists in the log
 - **Consistency proofs** - verify the log only appended (no deletions/modifications)
 
@@ -30,9 +30,9 @@ mrkl provides **tamper-evident append-only logs** for PostgreSQL tables using th
   ```bash
   DATABASE_URL=postgres://user:password@localhost/dbname
   # The following are optional, with given default values
-  MRKL_SERVER_ADDR=127.0.0.1:3000
-  MRKL_SERVER_URL=http://localhost:3000
-  MRKL_DASHBOARD_REFRESH_INTERVAL=1
+  TRELLIS_SERVER_ADDR=127.0.0.1:3000
+  TRELLIS_SERVER_URL=http://localhost:3000
+  TRELLIS_DASHBOARD_REFRESH_INTERVAL=1
   ```
 
 ### Schema setup
@@ -210,7 +210,7 @@ in this example, the columns for the source table would be
 In the following example, a hash value is proved to be included in log `my_log`
 
 ```rust
-use mrkl::service::Client;
+use trellis::service::Client;
 
 let client = Client::new("http://localhost:3000")?;
 
