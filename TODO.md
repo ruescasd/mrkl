@@ -62,6 +62,8 @@
           - Could use read, clone, update and then write, to perform the tree updates outsiude of the lock
     - [ ] Minimize PostgreSQL lock contention on source tables (documentation task for external applications)
     - [ ] Parallelize batch processor per-log
+    - [ ] Investigate occasional merkle tree update compute time spike: Occasionally the merkle tree update time spikes to 2-4x its previous
+    values, for approximately 10-20 cycles, before returning to the baseline.
 
 **Documentation**:
 - [X] REMOVED, sufficiently covered by Tutorial: Deployment guide (environment variables, database setup)
