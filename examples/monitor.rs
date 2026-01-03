@@ -213,7 +213,7 @@ async fn verify_consistency(
 ///
 /// # Arguments
 ///
-/// * `client` - The mrkl client for making consistency proof requests
+/// * `client` - The Trellis client for making consistency proof requests
 /// * `log_name` - The name of the log to verify
 /// * `old_root` - The previous root hash we observed
 /// * `new_root` - The new root hash we observed (to be validated)
