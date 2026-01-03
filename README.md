@@ -294,9 +294,9 @@ Scenario 2 (One batch):
 Same source data → different Merkle roots. This is **correct behavior** for append-only transparency logs where ordering is a point-in-time commitment.
 
 **Implications**:
-- ✅ Startup rebuild from `merkle_log_{log_name}` is deterministic
-- ❌ Rebuild from source tables is NOT deterministic
-- 🔒 Per-log tables must be backed up for disaster recovery
+- Startup rebuild from `merkle_log_{log_name}` is deterministic
+- Rebuild from source tables is NOT deterministic
+- Per-log tables must be backed up for disaster recovery
 
 ### Source table id column
 
