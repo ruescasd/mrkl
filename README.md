@@ -205,7 +205,7 @@ in this example, the columns for the source table would be
 * hash column: `leaf_hash`
 * timestamp column: `created_at`
 
-### Verify Inclusion
+### Verify Entry Inclusion
 
 In the following example, a hash value is proved to be included in log `my_log`
 
@@ -224,7 +224,7 @@ proof.verify(&hash)?;
 ```
 A complete example can be seen in [examples/post.rs](examples/post.rs).
 
-### Monitor Consistency
+### Verify Log Consistency
 
 In the following example, the root of the log `my_log` is proved to be consistent 
 with a previous root.
@@ -500,7 +500,7 @@ The lint configuration is relatively strict, it can be found in `Cargo.toml`.
 #### Batch processor optimization
 
 The batch processor's primary bottleneck is PostgreSQL inserts and queries, 
-not in-memory merkle tree operations (which usually complete in under 1ms). In a high insert rate scenario, the number of copied rows per batch can be large, which can benefit from:
+not in-memory merkle tree operations (which usually complete in milliseconds). In a high insert rate scenario, the number of copied rows per batch can be large, which can benefit from:
 * Multi-row INSERTs: The processor uses batch INSERTs instead of individual row inserts, 
   achieving a 10x performance improvement
     * TODO: consider postgresql COPY for even greater (though probably marginal) improvement
