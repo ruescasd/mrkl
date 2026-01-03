@@ -1,11 +1,11 @@
 -- psql -U postgres -f .\src\scripts\database.sql
-DROP DATABASE merkle_db;
-CREATE DATABASE merkle_db;
+DROP DATABASE trellis_db;
+CREATE DATABASE trellis_db;
 CREATE USER "user" WITH PASSWORD 'user';
-GRANT ALL PRIVILEGES ON DATABASE merkle_db TO "user";
+GRANT ALL PRIVILEGES ON DATABASE trellis_db TO "user";
 
--- Connect to the merkle_db database to set schema permissions
-\c merkle_db
+-- Connect to the trellis_db database to set schema permissions
+\c trellis_db
 
 -- Grant schema permissions
 GRANT ALL ON SCHEMA public TO "user";

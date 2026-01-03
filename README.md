@@ -268,7 +268,7 @@ $ cargo run --bin main -- --verify-db
 
 ```bash
 # Disable log 'example_post_log'
-psql "postgres://user:user@localhost:5432/merkle_db" -c "update verification_logs set enabled = 'f' where log_name = 'example_post_log'";
+psql "postgres://user:user@localhost:5432/trellis_db" -c "update verification_logs set enabled = 'f' where log_name = 'example_post_log'";
 ```
 
 To re-enable replace `set enabled = 'f'` with `set enabled = 't'` above.
