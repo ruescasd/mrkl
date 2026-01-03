@@ -12,13 +12,17 @@ use crate::service::state::AppState;
 // ============================================================================
 
 /// Validates that a log name contains only allowed characters.
-/// 
+///
 /// Log names must match the pattern `[a-z0-9_]+` to ensure they can be safely
-/// used as PostgreSQL table name suffixes without quoting or escaping.
-/// 
+/// used as `PostgreSQL` table name suffixes without quoting or escaping.
+///
 /// # Returns
 /// - `Ok(())` if the log name is valid
 /// - `Err` with description if invalid
+///
+/// # Errors
+/// Returns an error if the log name is empty, contains invalid characters,
+/// or starts with a digit.
 pub fn validate_log_name(log_name: &str) -> Result<()> {
     if log_name.is_empty() {
         return Err(anyhow::anyhow!("Log name cannot be empty"));
@@ -26,32 +30,30 @@ pub fn validate_log_name(log_name: &str) -> Result<()> {
     
     if !log_name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
         return Err(anyhow::anyhow!(
-            "Log name '{}' contains invalid characters. Only lowercase letters, digits, and underscores are allowed.",
-            log_name
+            "Log name '{log_name}' contains invalid characters. Only lowercase letters, digits, and underscores are allowed."
         ));
     }
-    
+
     // Cannot start with a digit (PostgreSQL identifier rule)
-    if log_name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+    if log_name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return Err(anyhow::anyhow!(
-            "Log name '{}' cannot start with a digit",
-            log_name
+            "Log name '{log_name}' cannot start with a digit"
         ));
     }
     
     Ok(())
 }
 
-/// Returns the PostgreSQL table name for a log's merkle entries.
-/// 
+/// Returns the `PostgreSQL` table name for a log's merkle entries.
+///
 /// Each log has its own dedicated table named `merkle_log_{log_name}`.
 /// This provides isolation between logs and enables potential parallelization.
-/// 
+///
 /// # Panics
-/// Panics if log_name is invalid. Callers should validate first with `validate_log_name`.
+/// Panics if `log_name` is invalid. Callers should validate first with `validate_log_name`.
 fn merkle_log_table_name(log_name: &str) -> String {
-    debug_assert!(validate_log_name(log_name).is_ok(), "Invalid log name: {}", log_name);
-    format!("merkle_log_{}", log_name)
+    debug_assert!(validate_log_name(log_name).is_ok(), "Invalid log name: {log_name}");
+    format!("merkle_log_{log_name}")
 }
 
 /// Creates the per-log merkle table if it doesn't exist.
@@ -73,8 +75,8 @@ async fn ensure_merkle_log_table_exists(conn: &PooledConnection, log_name: &str)
     
     // Use IF NOT EXISTS to make this idempotent
     let create_table = format!(
-        r#"
-        CREATE TABLE IF NOT EXISTS {} (
+        r"
+        CREATE TABLE IF NOT EXISTS {table_name} (
             id BIGSERIAL PRIMARY KEY,
             source_table TEXT NOT NULL,
             source_id BIGINT NOT NULL,
@@ -82,8 +84,7 @@ async fn ensure_merkle_log_table_exists(conn: &PooledConnection, log_name: &str)
             processed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (source_table, source_id)
         )
-        "#,
-        table_name
+        "
     );
     
     conn.batch_execute(&create_table).await?;
@@ -129,7 +130,7 @@ pub struct BatchStats {
 /// - Rebuild from source tables is NOT deterministic (would produce different merkle roots)
 /// - `merkle_log_{log_name}` must be backed up and preserved for disaster recovery
 /// - This is correct behavior for append-only transparency logs
-
+///
 /// Configuration for a source table that feeds into the merkle log table
 #[derive(Debug, Clone)]
 pub struct SourceConfig {
@@ -312,8 +313,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
         let conn = app_state.db_pool.get().await?;
         let table_name = merkle_log_table_name(log_name);
         let fetch_query = format!(
-            "SELECT id, leaf_hash FROM {} WHERE id > $1 ORDER BY id",
-            table_name
+            "SELECT id, leaf_hash FROM {table_name} WHERE id > $1 ORDER BY id"
         );
         let fetch_result = conn.query(&fetch_query, &[&current_last_id]).await;
 
@@ -427,7 +427,9 @@ async fn copy_source_rows(
     let txn = conn.transaction().await?;
     
     // Advisory lock prevents concurrent execution for this specific log
-    let lock_id = hash_string_to_i64(log_name);
+    get_advisory_lock(log_name, &txn).await?;
+    
+    /* let lock_id = hash_string_to_i64(log_name);
     let lock_acquired: bool = txn
         .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&lock_id])
         .await?
@@ -437,7 +439,7 @@ async fn copy_source_rows(
         return Err(anyhow::anyhow!(
             "Another processing batch is running for log '{log_name}'"
         ));
-    }
+    }*/
     
     // Increase work_mem for the sort operation in the CTE
     // Default PostgreSQL work_mem (4MB) may cause disk-based sorts for large batches
@@ -455,8 +457,7 @@ async fn copy_source_rows(
     for config in &valid_configs {
         // Get last processed source_id for this specific source table in this log
         let last_processed_query = format!(
-            "SELECT COALESCE(MAX(source_id), 0) FROM {} WHERE source_table = $1::text",
-            table_name
+            "SELECT COALESCE(MAX(source_id), 0) FROM {table_name} WHERE source_table = $1::text"
         );
         let last_processed: i64 = txn
             .query_one(&last_processed_query, &[&config.table_name])
@@ -494,9 +495,8 @@ async fn copy_source_rows(
         union_parts.push(select);
     }
     
-    // Build the full query with CTE, ordering (matching Rust semantics), and INSERT
+    // Build the full query with CTE, ordering and INSERT
     // ORDER BY: timestamp NULLS LAST (timestamped entries first), then source_id, then source_table
-    // This matches the Rust SourceRow Ord implementation
     //
     // IMPORTANT: We use DEFAULT for id column, letting PostgreSQL's SERIAL sequence assign IDs.
     // This avoids a full table scan from SELECT MAX(id) which would grow O(n) with table size.
@@ -521,7 +521,8 @@ async fn copy_source_rows(
             leaf_hash
         FROM ordered",
         union_parts.join(" UNION ALL "),
-        param_values.len() + 1,  // batch_size for final LIMIT
+        // $? parameter for final limit
+        param_values.len().checked_add(1).expect("number of union tables << usize::MAX"),
         table_name
     );
     
@@ -531,7 +532,9 @@ async fn copy_source_rows(
         all_params.push(p);
     }
     
-    let batch_size_i64 = i64::from(batch_size * valid_configs.len() as u32);
+    let valid_configs_len = u32::try_from(valid_configs.len()).expect("number of valid configs << u32::MAX");
+    let total_batch_size = batch_size.checked_mul(valid_configs_len).expect("batch_size * (<< u32::MAX) << u32::MAX");
+    let batch_size_i64 = i64::from(total_batch_size);
     all_params.push(&batch_size_i64);
     
     let rows_affected = txn.execute(&query, &all_params).await?;
@@ -633,7 +636,7 @@ async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
     }
 
     // Fetch all entries for this log
-    let query = format!("SELECT id, leaf_hash FROM {} ORDER BY id", table_name);
+    let query = format!("SELECT id, leaf_hash FROM {table_name} ORDER BY id");
     let rows = conn.query(&query, &[]).await?;
 
     if rows.is_empty() {
@@ -772,4 +775,22 @@ fn u64_millis(millis: u128) -> u64 {
     } else {
         u64::try_from(millis).expect("millis <= u64::MAX")
     }
+}
+
+/// Acquires an advisory lock for the given log name within the provided transaction.
+async fn get_advisory_lock(log_name: &str, txn: &tokio_postgres::Transaction<'_>) -> Result<()> {
+    // Advisory lock prevents concurrent execution for this specific log
+    let lock_id = hash_string_to_i64(log_name);
+    let lock_acquired: bool = txn
+        .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&lock_id])
+        .await?
+        .get(0);
+    
+    if !lock_acquired {
+        return Err(anyhow::anyhow!(
+            "Another processing batch is running for log '{log_name}'"
+        ));
+    }
+
+    Ok(())
 }

@@ -558,34 +558,58 @@ cargo run --bin load --release -- --rows-per-interval 1000 --num-sources 3
 
 #### Typical performance numbers
 
-##### Hardware 1
+##### Hardware 1 (drb)
 
-`cargo run --bin load --release -- --rows-per-interval 1000 --num-sources 3`
+`cargo run --bin load --release -- --num-sources 3 --rows-per-interval 1000`, ~450k entries
 
-    Cycle: 146ms
-    
-    TOTAL    COPY    QUERY   INSERT    FETCH     TREE
-    64       60        6       39        1        1
-    45       41        3       30        1        1
-    37       34        3       24        1        1
+      Mode: AVERAGE | Press 'a' for average, 'l' for last
 
-`cargo run --bin load --release -- --rows-per-interval 5000 --num-sources 3`
+      Cycle: 26ms (0.03x) | Active Logs: 3
 
-    Cycle: 828ms
+      LOG                      ROWS    TOTAL     COPY   INSERT   (µs/row)    FETCH     TREE  TREE/WORK         SIZE     MEMORY
+      ------------------------------------------------------------------------------------------------------------------------
+      load_test_0              1032        9        8        4        3.9        0        1       0.05       458.5k     92.4MB
+      load_test_1              1032        7        6        4        3.9        0        1       0.05       458.5k     92.4MB
+      load_test_2              1032        7        5        4        3.9        0        1       0.05       458.5k     92.4MB
 
-    TOTAL    COPY    QUERY   INSERT    FETCH     TREE
-    311      290       13      255        7       12
-    297      276        9      245        6       12
-    206      186        8      165        6       13
 
-`cargo run --bin load --release -- --rows-per-interval 10000 --num-sources 3`
-    
-    Cycle: 1591ms
-    
-    TOTAL    COPY    QUERY   INSERT    FETCH     TREE
-    535      478       23      439       13       42
-    563      507       15      483       12       42
-    498      438       14      412       13       46
+`cargo run --bin load --release -- --num-sources 3 --rows-per-interval 5000`, ~1M entries
+
+      Mode: AVERAGE | Press 'a' for average, 'l' for last
+
+      Cycle: 102ms (0.09x) | Active Logs: 3
+
+      LOG                      ROWS    TOTAL     COPY   INSERT   (µs/row)    FETCH     TREE  TREE/WORK         SIZE     MEMORY
+      ------------------------------------------------------------------------------------------------------------------------
+      load_test_0              5497       35       26       23        4.2        0        7       0.06         1.1M    219.5MB
+      load_test_1              5497       33       24       21        3.8        0        7       0.06         1.1M    219.5MB
+      load_test_2              5497       33       24       21        3.8        0        7       0.06         1.1M    219.5MB
+
+
+`cargo run --bin load --release -- --num-sources 3 --rows-per-interval 10000`, ~1M entries
+
+      Mode: AVERAGE | Press 'a' for average, 'l' for last
+
+      Cycle: 220ms (0.18x) | Active Logs: 3
+
+      LOG                      ROWS    TOTAL     COPY   INSERT   (µs/row)    FETCH     TREE  TREE/WORK         SIZE     MEMORY
+      ------------------------------------------------------------------------------------------------------------------------
+      load_test_0             11998       75       56       52        4.3        1       15       0.06         1.2M    251.7MB
+      load_test_1             11998       72       54       50        4.2        1       15       0.06         1.2M    251.7MB
+      load_test_2             11998       72       54       51        4.3        1       15       0.06         1.2M    251.7MB
+
+`cargo run --bin load --release -- --num-sources 3 --rows-per-interval 10000`, ~5M entries
+
+      Mode: AVERAGE | Press 'a' for average, 'l' for last
+
+      Cycle: 245ms (0.20x) | Active Logs: 3
+
+      LOG                      ROWS    TOTAL     COPY   INSERT   (µs/row)    FETCH     TREE  TREE/WORK         SIZE     MEMORY
+      ------------------------------------------------------------------------------------------------------------------------
+      load_test_0             11998       81       57       53        4.4        4       18       0.07         5.1M      1.0GB
+      load_test_1             11998       82       59       56        4.7        2       18       0.07         5.1M      1.0GB
+      load_test_2             11998       79       56       53        4.4        4       18       0.07         5.1M      1.0GB
+
 
 ##### Hardware 2
 

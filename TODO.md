@@ -119,48 +119,6 @@
     - [x] Implemented multi-row INSERT optimization - achieved 10x performance improvement (130ms → 12-15ms for 1000 rows)
     - [x] Validated RwLock is not a bottleneck (tree updates: 0-1ms)
     - [x] System now processes ~150,000 rows/second with 94% idle time
-- [ ] Performance optimization (remaining items - not currently bottlenecks):
-    - [ ] Minimize RwLock contention (VALIDATED: tree updates are 0-1ms, not needed currently)
-          - Could use read, clone, update and then write, to perform the tree updates outsiude of the lock
-    - [ ] Minimize PostgreSQL lock contention on source tables (documentation task for external applications)
-    - [X] REMOVED, not necessary: "Storing only published roots is only a marginal reduction in memory. No need to store entire tree,
-          rewind never called by http endpoints"
-          
-          Root storage optimization (only store published roots, not all intermediate - blocked: rebuild scenario doesn't know which roots were published)
-        - UPDATE: 
-            Could store published roots (that is, size of the tree) persistently, this would allow
-            storing only published roots in memory, when rebuilding we re-construct the published roots,
-            this could even allow storing the tree itself for that root since there would be fewer of them.
-                
-                UPDATE: Storing only published roots is only a marginal reduction in memory. There is no need to store the entire tree, rewind is never called by http endpoints:
-
-                  Hypothesis CONFIRMED. ✅ The rewind function cannot be called by any HTTP endpoints.
-
-                  Detailed trace:
-
-                  get_inclusion_proof (lines 100-159)
-                  Calls tree.prove_inclusion(&query.hash)
-                  Which delegates to prove_inclusion_at_root(hash, &self.root()) ← passes CURRENT root
-                  In prove_inclusion_at_root (line 163-165): checks if root == self.root() → takes early return, skips rewind
-                  Then calls tree.verify_inclusion(&query.hash, &proof)
-                  Which delegates to verify_inclusion_at_root(leaf_hash, &self.root(), proof) ← passes CURRENT root
-                  In verify_inclusion_at_root (line 185-187): checks if root == self.root() → takes early return, skips rewind
-                  get_consistency_proof (lines 161-228)
-                  Calls tree.prove_consistency(&query.old_root)
-                  Which delegates to prove_consistency_between(old_root, &self.root()) ← passes CURRENT root as new_root
-                  In prove_consistency_between (line 226-228): checks if new_root == self.root() → takes first branch &self.tree, skips rewind
-                  Then calls tree.verify_consistency(&query.old_root, &proof)
-                  Which delegates to verify_consistency_between(old_root, &self.root(), proof) ← passes CURRENT root as new_root
-                  In verify_consistency_between (line 257-259): checks if new_root == self.root() → takes first branch &self.tree, skips rewind
-                  Key insight: The HTTP handlers only use the public API methods (prove_inclusion, verify_inclusion, prove_consistency, verify_consistency) which always use the current root for the "new" or "target" tree. The rewind function is only called when checking against historical roots, but the HTTP endpoints never pass historical roots as the verification target.
-
-
-            - rebuilding deterministically only from the source and the persisted roots (tree sizes),
-                since this replays the same batch boundaries
-            - To ensure that published roots are stored, we only acquire the tree RwLock and modify it after the published root (the tree  size) is persisted (we do _not_ do the db insert within the lock)
-    - [ ] Investigate PostgreSQL partitioning for merkle_log (partitions on log_name)
-    - [ ] ct-merkle double-hashing issue (expects raw data, we're passing pre-computed hashes that get hashed again)
-    - [ ] Configurable batch sizes and intervals per log
 - [x] Graceful shutdown and pause control
     - Implemented processor_state: Arc<AtomicU8> in AppState (0=Running, 1=Paused, 2=Stopping)
     - Added admin endpoints (memory-only, no DB access):
@@ -172,12 +130,21 @@
     - Maintains architectural separation: HTTP endpoints never touch database
 - [X] Graceful shutdown: Stop processor cleanly, wait for in-flight batches (PARTIAL: stop 
       implementein-flight tracking not yet added) ==> Not necessary.
-
+- [ ] Performance optimization (remaining items - not currently bottlenecks):
+    - [X] REMOVED, not necessary: "Storing only published roots is only a marginal reduction in memory. No need to store entire tree,
+          rewind never called by http endpoints", see [1]
+    - [X] REMOVED: Superseded by multiple table implementation: Investigate PostgreSQL partitioning for merkle_log (partitions on log_name)
+    - [ ] ct-merkle double-hashing issue (expects raw data, we're passing pre-computed hashes that get hashed again)
+    - [ ] Configurable batch sizes and intervals per log
+    - [ ] Minimize RwLock contention (VALIDATED: tree updates are 0-1ms, not needed currently)
+          - Could use read, clone, update and then write, to perform the tree updates outsiude of the lock
+    - [ ] Minimize PostgreSQL lock contention on source tables (documentation task for external applications)
+    - [ ] Parallelize batch processor per-log
 
 **Documentation**:
-- [ ] Deployment guide (environment variables, database setup)
-- [ ] API documentation (OpenAPI/Swagger spec)
-- [ ] Multi-log configuration examples
+- [X] REMOVED, sufficiently covered by Tutorial: Deployment guide (environment variables, database setup)
+- [X] REMOVED, rustdoc + readme.md is enough: API documentation (OpenAPI/Swagger spec)
+- [X] Multi-log configuration examples
 - [ ] Performance characteristics and tuning guide
 
 **Testing**:
@@ -186,7 +153,7 @@
 - [ ] Large dataset tests (millions of entries per log)
 
 **Future Enhancements** (Post-Phase 4):
-- [ ] Pruning old entries (if needed)
+- [X] REMOVED: can be easily achieved with independent log tables: Pruning old entries (if needed)
 - [ ] Read replicas for HTTP layer
 - [ ] Async proof generation for large trees
 - [ ] Proof caching for frequently requested proofs
@@ -242,46 +209,23 @@ is a point-in-time commitment based on what entries are known when the batch run
 - Backward compatible: Optional timestamp column allows mixed timestamped/non-timestamped scenarios
 - Deterministic and repeatable: Same database state always produces same tree
 
-Old indices
 
-Mode: AVERAGE | Press 'a' for average, 'l' for last
+[1] Hypothesis CONFIRMED. ✅ The rewind function cannot be called by any HTTP endpoints.
 
-Cycle: 639ms (0.76x) | Active Logs: 3
+Detailed trace:
 
-LOG                      ROWS   LEAVES    TOTAL     COPY    QUERY INS µs/row    FETCH     TREE         SIZE     MEMORY       UPDATE
-----------------------------------------------------------------------------------------------------------------------------------------------------
-load_test_0             15665    19998      224      199        0       12.5        4  19(0.9)         1.3M    263.8MB     23:53:42
-load_test_1             15487    19998      220      194        0       12.3        4  20(1.0)         1.3M    263.8MB     23:53:43
-load_test_2             15365    18998      167      141        0        8.9        4  20(1.0)         1.3M    263.8MB     23:53:43
-
-
-Cycle: 705ms (0.80x) | Active Logs: 3
-
-LOG                      ROWS   LEAVES    TOTAL     COPY    QUERY INS µs/row    FETCH     TREE         SIZE     MEMORY       UPDATE
-----------------------------------------------------------------------------------------------------------------------------------------------------
-load_test_0             17331    19998      257      222        0       12.6        7  26(1.2)         5.1M      1.0GB     00:27:12
-load_test_1             17553    19998      265      228        0       12.8        9  26(1.2)         5.1M      1.0GB     00:27:12
-load_test_2             16820    19998      180      146        0        8.4        8  25(1.1)         5.1M      1.0GB     00:27:12
-
-
-New indices
-
-Mode: AVERAGE | Press 'a' for average, 'l' for last
-
-Cycle: 807ms (0.85x) | Active Logs: 3
-
-LOG                      ROWS   LEAVES    TOTAL     COPY    QUERY INS µs/row    FETCH     TREE         SIZE     MEMORY       UPDATE
-----------------------------------------------------------------------------------------------------------------------------------------------------
-load_test_0             18664    19998      275      245        0       13.0        5  23(1.1)         1.4M    273.9MB     23:56:45
-load_test_1             18742    19998      283      254        0       13.3        5  23(1.1)         1.4M    273.9MB     23:56:46
-load_test_2             18253    19998      260      231        0       12.5        5  22(1.1)         1.4M    273.9MB     23:56:46
-
-
-
-Cycle: 842ms (0.80x) | Active Logs: 3
-
-LOG                      ROWS   LEAVES    TOTAL     COPY    QUERY INS µs/row    FETCH     TREE         SIZE     MEMORY       UPDATE
-----------------------------------------------------------------------------------------------------------------------------------------------------
-load_test_0             18487    19998      286      249        0       13.3        9  26(1.2)         5.1M   1019.1MB     00:17:46
-load_test_1             18553    19998      288      254        0       13.5        6  27(1.2)         5.1M   1019.1MB     00:17:47
-load_test_2             19109    19998      276      240        0       12.4        7  27(1.2)         5.0M   1017.0MB     00:17:45
+get_inclusion_proof (lines 100-159)
+Calls tree.prove_inclusion(&query.hash)
+Which delegates to prove_inclusion_at_root(hash, &self.root()) ← passes CURRENT root
+In prove_inclusion_at_root (line 163-165): checks if root == self.root() → takes early return, skips rewind
+Then calls tree.verify_inclusion(&query.hash, &proof)
+Which delegates to verify_inclusion_at_root(leaf_hash, &self.root(), proof) ← passes CURRENT root
+In verify_inclusion_at_root (line 185-187): checks if root == self.root() → takes early return, skips rewind
+get_consistency_proof (lines 161-228)
+Calls tree.prove_consistency(&query.old_root)
+Which delegates to prove_consistency_between(old_root, &self.root()) ← passes CURRENT root as new_root
+In prove_consistency_between (line 226-228): checks if new_root == self.root() → takes first branch &self.tree, skips rewind
+Then calls tree.verify_consistency(&query.old_root, &proof)
+Which delegates to verify_consistency_between(old_root, &self.root(), proof) ← passes CURRENT root as new_root
+In verify_consistency_between (line 257-259): checks if new_root == self.root() → takes first branch &self.tree, skips rewind
+Key insight: The HTTP handlers only use the public API methods (prove_inclusion, verify_inclusion, prove_consistency, verify_consistency) which always use the current root for the "new" or "target" tree. The rewind function is only called when checking against historical roots, but the HTTP endpoints never pass historical roots as the verification target.

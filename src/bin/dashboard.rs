@@ -210,22 +210,23 @@ fn display_metrics(
 
     // Table header
     // INSERT shows total ms, INS µs/row shows microseconds per row for normalized comparison
+    // TREE/WORK shows normalized tree update cost: µs per (row × tree level)
     println!(
-        "{:<20} {:>8} {:>8} {:>8} {:>8} {:>8} {:>10} {:>8} {:>8} {:>12} {:>10} {:>12}",
+        "{:<20} {:>8} {:>8} {:>8} {:>8} {:>10} {:>8} {:>8} {:>10} {:>12} {:>10} {:>12}",
         "LOG",
         "ROWS",
-        "LEAVES",
         "TOTAL",
         "COPY",
         "INSERT",
-        "INS µs/row",
+        "(µs/row)",
         "FETCH",
         "TREE",
+        "TREE/WORK",
         "SIZE",
         "MEMORY",
         "UPDATE"
     );
-    println!("{}", "-".repeat(148));
+    println!("{}", "-".repeat(144));
 
     // Sort logs by name for consistent display
     let mut log_names: Vec<_> = metrics.logs.keys().collect();
@@ -247,15 +248,18 @@ fn display_metrics(
                 DisplayMode::Average => history.get_log_averages(log_name).unwrap_or((0, 0, 0, 0, 0, 0)),
             };
 
-            // Calculate normalized tree time (time per tree level)
-            // Merkle tree updates are O(log₂ n), so normalizing by tree depth gives per-level cost
-            let tree_str = if log_metrics.tree_size > 1 {
+            // Calculate normalized tree update cost: µs per (row × tree level)
+            // This measures efficiency of tree updates accounting for both batch size and tree depth
+            // Formula: (tree_ms * 1000) / (rows * log2(tree_size)) = µs per unit of tree work
+            let tree_work_str = if log_metrics.tree_size > 1 && rows > 0 {
                 let log2_size = (log_metrics.tree_size as f64).log2();
-                let normalized = tree as f64 / log2_size;
-                format!("{}({:.1})", tree, normalized)
+                let tree_us = tree as f64 * 1000.0;
+                let work_units = rows as f64 * log2_size;
+                let us_per_work = tree_us / work_units;
+                format!("{:.2}", us_per_work)
             } else {
-                // For empty or single-element trees, just show raw time
-                tree.to_string()
+                // For empty/single-element trees or zero rows, show dash
+                "-".to_string()
             };
 
             // Extract time from ISO8601 timestamp (HH:MM:SS)
@@ -274,20 +278,20 @@ fn display_metrics(
             };
 
             println!(
-                "{:<20} {:>8} {:>8} {:>8} {:>8} {:>8} {:>10} {:>8} {:>8} {:>12} {:>10} {:>12}",
+                "{:<20} {:>8} {:>8} {:>8} {:>8} {:>10} {:>8} {:>8} {:>10} {:>12} {:>10} {:>12}",
                 if log_name.len() > 20 {
                     &log_name[..20]
                 } else {
                     log_name
                 },
                 rows,
-                log_metrics.last_batch_leaves,
                 total,
                 copy,
                 insert,
                 format!("{:.1}", insert_us_per_row),
                 fetch,
-                tree_str,
+                tree,
+                tree_work_str,
                 format_number(log_metrics.tree_size),
                 format_memory(log_metrics.tree_memory_bytes),
                 time_str
