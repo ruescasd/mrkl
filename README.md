@@ -120,13 +120,15 @@ updates the display.
 ```bash
 $ cargo run --bin dashboard
 Connecting to http://localhost:3000/metrics...
-Refresh interval: 5s
-Cycle: 22ms (0.02x) | Active Logs: 4
+Mode: AVERAGE | Press 'a' for average, 'l' for last
 
-LOG                    ROWS   LEAVES  TOTAL   COPY  QUERY INSERT  FETCH  TREE   SIZE     MEMORY   UPDATE
-----------------------------------------------------------------------------------------------------------
-example_post_log         0      0      4      4      0      0      0     0         1     211B     20:28:02
-test_log_multi_sourc     0      0      8      8      0      0      0     0     10.0k    2.0MB     20:28:02
+Cycle: 26ms (0.03x) | Active Logs: 3
+
+LOG                      ROWS    TOTAL     COPY   INSERT   (µs/row)    FETCH     TREE  TREE/WORK         SIZE     MEMORY
+------------------------------------------------------------------------------------------------------------------------
+load_test_0              1032        9        8        4        3.9        0        1       0.05       458.5k     92.4MB
+load_test_1              1032        7        6        4        3.9        0        1       0.05       458.5k     92.4MB
+load_test_2              1032        7        5        4        3.9        0        1       0.05       458.5k     92.4MB
 ```
 
 ### Pausing/Resuming the Batch Processor
@@ -273,9 +275,9 @@ To re-enable replace `set enabled = 'f'` with `set enabled = 't'` above.
 
 ## ⚠️Important notes
 
-### The `merkle_log` table
+### The per-log `merkle_log_{log_name}` tables
 
-**⚠️ CRITICAL**: The `merkle_log` table is ground truth and **cannot be reconstructed** deterministically from source tables. If the `merkle_log` table is lost the merkle tree roots cannot be recomputed nor extended in a consistent way.
+**⚠️ CRITICAL**: The per-log `merkle_log_{log_name}` tables are ground truth and **cannot be reconstructed** deterministically from source tables. If these tables are lost, the merkle tree roots cannot be recomputed nor extended in a consistent way.
 
 **Why?** Batch boundaries and late arrivals create path-dependent ordering:
 
@@ -292,9 +294,9 @@ Scenario 2 (One batch):
 Same source data → different Merkle roots. This is **correct behavior** for append-only transparency logs where ordering is a point-in-time commitment.
 
 **Implications**:
-- ✅ Startup rebuild from `merkle_log` is deterministic
+- ✅ Startup rebuild from `merkle_log_{log_name}` is deterministic
 - ❌ Rebuild from source tables is NOT deterministic
-- 🔒 `merkle_log` must be backed up for disaster recovery
+- 🔒 Per-log tables must be backed up for disaster recovery
 
 ### Source table id column
 
@@ -327,7 +329,7 @@ The batch processor ensures per-log all-or-nothing semantics:
 
 **Transaction scope**: Each log's batch processes all its configured source tables within a single database transaction. This means:
 - If any error occurs while processing a log, that log's batch rolls back
-- No partial state is ever committed to `merkle_log` for that log
+- No partial state is ever committed to `merkle_log_{log_name}` for that log
 - Either all source tables for a log are processed together, or none are
 
 **Independent log processing**: Logs are processed independently - an error in one log does not affect other logs being processed in the same cycle.
@@ -515,9 +517,7 @@ Each log has its own dedicated table (`merkle_log_{log_name}`) rather than a sha
 
 Each per-log table has these indexes:
 
-* **Primary key on `id`**: Sequential ID for ordering within the log (each table has its own BIGSERIAL sequence)
-
-* **Index on `id`**: Additional index for efficient range queries
+* **Primary key on `id`**: Sequential ID for ordering within the log (each table has its own BIGSERIAL sequence). The PRIMARY KEY constraint automatically creates a B-tree index on `id`.
 
 * **UNIQUE constraint on `(source_table, source_id)`**: Defense-in-depth against duplicate entries. Given that source IDs are unique per table, we copy with `WHERE source_id > last_processed`, and operations are transactional, duplicates are logically impossible. This constraint catches programming bugs and could be removed as a future optimization if INSERT performance becomes critical.
 
