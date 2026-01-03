@@ -9,8 +9,8 @@
 //! # Usage
 //!
 //! ```bash
-//! cargo run --bin setup           # Create/update schema
-//! cargo run --bin setup -- --reset # Drop and recreate all tables
+//! cargo run --bin setup                    # Create/update schema
+//! cargo run --bin setup -- --reset         # Drop and recreate all tables
 //! ```
 
 use anyhow::Result;
@@ -100,15 +100,18 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
             CONSTRAINT merkle_log_immutable CHECK (processed_at = processed_at),
             UNIQUE (log_name, source_table, source_id)
         );
-
-        -- Index for querying a specific log's entries in order
-        CREATE INDEX IF NOT EXISTS idx_merkle_log_by_log ON merkle_log(log_name, id);
-
-        -- Index for efficient MAX(source_id) lookups per (log_name, source_table)
-        -- Used by batch processor to find last processed source_id for each source
-        -- CREATE INDEX IF NOT EXISTS idx_merkle_log_source_max 
-        --    ON merkle_log(log_name, source_table, source_id DESC);
     "#,
+        )
+        .await?;
+
+    // Create index for efficient queries by log
+    // A/B testing showed this index improves INSERT performance (~10-15% faster)
+    // likely by helping with UNIQUE constraint checking or B-tree locality
+    client
+        .batch_execute(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_merkle_log_by_log ON merkle_log(log_name, id);
+        "#,
         )
         .await?;
     println!("✅ Table 'merkle_log' is ready.");

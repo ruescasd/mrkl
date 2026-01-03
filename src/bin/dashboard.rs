@@ -56,6 +56,8 @@ struct LogSamples {
     query_ms: VecDeque<u64>,
     /// Insert operation time samples
     insert_ms: VecDeque<u64>,
+    /// Rows processed samples (for per-row calculations)
+    rows: VecDeque<u64>,
     /// Fetch operation time samples
     fetch_ms: VecDeque<u64>,
     /// Tree update time samples
@@ -97,6 +99,7 @@ impl MetricsHistory {
                 copy_ms: VecDeque::with_capacity(self.window_size),
                 query_ms: VecDeque::with_capacity(self.window_size),
                 insert_ms: VecDeque::with_capacity(self.window_size),
+                rows: VecDeque::with_capacity(self.window_size),
                 fetch_ms: VecDeque::with_capacity(self.window_size),
                 tree_ms: VecDeque::with_capacity(self.window_size),
             });
@@ -105,6 +108,7 @@ impl MetricsHistory {
             Self::push_sample(&mut samples.copy_ms, log_metrics.last_copy_ms, self.window_size);
             Self::push_sample(&mut samples.query_ms, log_metrics.last_query_sources_ms, self.window_size);
             Self::push_sample(&mut samples.insert_ms, log_metrics.last_insert_merkle_log_ms, self.window_size);
+            Self::push_sample(&mut samples.rows, log_metrics.last_batch_rows, self.window_size);
             Self::push_sample(&mut samples.fetch_ms, log_metrics.last_fetch_merkle_log_ms, self.window_size);
             Self::push_sample(&mut samples.tree_ms, log_metrics.last_tree_update_ms, self.window_size);
         }
@@ -132,8 +136,8 @@ impl MetricsHistory {
         Self::average(&self.global_samples.cycle_duration_ms)
     }
 
-    /// Gets the average metrics for a specific log (total, copy, query, insert, fetch, tree)
-    fn get_log_averages(&self, log_name: &str) -> Option<(u64, u64, u64, u64, u64, u64)> {
+    /// Gets the average metrics for a specific log (total, copy, query, insert, fetch, tree, rows)
+    fn get_log_averages(&self, log_name: &str) -> Option<(u64, u64, u64, u64, u64, u64, u64)> {
         self.log_samples.get(log_name).map(|samples| (
             Self::average(&samples.total_ms),
             Self::average(&samples.copy_ms),
@@ -141,6 +145,7 @@ impl MetricsHistory {
             Self::average(&samples.insert_ms),
             Self::average(&samples.fetch_ms),
             Self::average(&samples.tree_ms),
+            Self::average(&samples.rows),
         ))
     }
 }
@@ -209,22 +214,23 @@ fn display_metrics(
     println!();
 
     // Table header
+    // INSERT column shows µs/row (microseconds per row) for normalized comparison
     println!(
-        "{:<20} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10} {:>12}",
+        "{:<20} {:>8} {:>8} {:>8} {:>8} {:>8} {:>10} {:>8} {:>8} {:>12} {:>10} {:>12}",
         "LOG",
         "ROWS",
         "LEAVES",
         "TOTAL",
         "COPY",
         "QUERY",
-        "INSERT",
+        "INS µs/row",
         "FETCH",
         "TREE",
         "SIZE",
         "MEMORY",
         "UPDATE"
     );
-    println!("{}", "-".repeat(144));
+    println!("{}", "-".repeat(148));
 
     // Sort logs by name for consistent display
     let mut log_names: Vec<_> = metrics.logs.keys().collect();
@@ -234,7 +240,7 @@ fn display_metrics(
     for log_name in log_names {
         if let Some(log_metrics) = metrics.logs.get(log_name) {
             // Get values based on mode
-            let (total, copy, query, insert, fetch, tree) = match mode {
+            let (total, copy, query, insert, fetch, tree, rows) = match mode {
                 DisplayMode::Last => (
                     log_metrics.last_total_ms,
                     log_metrics.last_copy_ms,
@@ -242,8 +248,9 @@ fn display_metrics(
                     log_metrics.last_insert_merkle_log_ms,
                     log_metrics.last_fetch_merkle_log_ms,
                     log_metrics.last_tree_update_ms,
+                    log_metrics.last_batch_rows,
                 ),
-                DisplayMode::Average => history.get_log_averages(log_name).unwrap_or((0, 0, 0, 0, 0, 0)),
+                DisplayMode::Average => history.get_log_averages(log_name).unwrap_or((0, 0, 0, 0, 0, 0, 0)),
             };
 
             // Calculate normalized tree time (time per tree level)
@@ -265,20 +272,26 @@ fn display_metrics(
                 .and_then(|t| t.split('.').next())
                 .unwrap_or("--:--:--");
 
-            
+            // Compute INSERT time per row in microseconds
+            let insert_us_per_row = if rows > 0 {
+                (insert as f64 * 1000.0) / rows as f64
+            } else {
+                0.0
+            };
+
             println!(
-                "{:<20} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>12} {:>10} {:>12}",
+                "{:<20} {:>8} {:>8} {:>8} {:>8} {:>8} {:>10} {:>8} {:>8} {:>12} {:>10} {:>12}",
                 if log_name.len() > 20 {
                     &log_name[..20]
                 } else {
                     log_name
                 },
-                log_metrics.last_batch_rows,
+                rows,
                 log_metrics.last_batch_leaves,
                 total,
                 copy,
                 query,
-                insert,
+                format!("{:.1}", insert_us_per_row),
                 fetch,
                 tree_str,
                 format_number(log_metrics.tree_size),

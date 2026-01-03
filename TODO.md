@@ -241,3 +241,47 @@ is a point-in-time commitment based on what entries are known when the batch run
 - Conditional SQL queries: includes timestamp column only when configured
 - Backward compatible: Optional timestamp column allows mixed timestamped/non-timestamped scenarios
 - Deterministic and repeatable: Same database state always produces same tree
+
+Old indices
+
+Mode: AVERAGE | Press 'a' for average, 'l' for last
+
+Cycle: 639ms (0.76x) | Active Logs: 3
+
+LOG                      ROWS   LEAVES    TOTAL     COPY    QUERY INS µs/row    FETCH     TREE         SIZE     MEMORY       UPDATE
+----------------------------------------------------------------------------------------------------------------------------------------------------
+load_test_0             15665    19998      224      199        0       12.5        4  19(0.9)         1.3M    263.8MB     23:53:42
+load_test_1             15487    19998      220      194        0       12.3        4  20(1.0)         1.3M    263.8MB     23:53:43
+load_test_2             15365    18998      167      141        0        8.9        4  20(1.0)         1.3M    263.8MB     23:53:43
+
+
+Cycle: 705ms (0.80x) | Active Logs: 3
+
+LOG                      ROWS   LEAVES    TOTAL     COPY    QUERY INS µs/row    FETCH     TREE         SIZE     MEMORY       UPDATE
+----------------------------------------------------------------------------------------------------------------------------------------------------
+load_test_0             17331    19998      257      222        0       12.6        7  26(1.2)         5.1M      1.0GB     00:27:12
+load_test_1             17553    19998      265      228        0       12.8        9  26(1.2)         5.1M      1.0GB     00:27:12
+load_test_2             16820    19998      180      146        0        8.4        8  25(1.1)         5.1M      1.0GB     00:27:12
+
+
+New indices
+
+Mode: AVERAGE | Press 'a' for average, 'l' for last
+
+Cycle: 807ms (0.85x) | Active Logs: 3
+
+LOG                      ROWS   LEAVES    TOTAL     COPY    QUERY INS µs/row    FETCH     TREE         SIZE     MEMORY       UPDATE
+----------------------------------------------------------------------------------------------------------------------------------------------------
+load_test_0             18664    19998      275      245        0       13.0        5  23(1.1)         1.4M    273.9MB     23:56:45
+load_test_1             18742    19998      283      254        0       13.3        5  23(1.1)         1.4M    273.9MB     23:56:46
+load_test_2             18253    19998      260      231        0       12.5        5  22(1.1)         1.4M    273.9MB     23:56:46
+
+
+
+Cycle: 842ms (0.80x) | Active Logs: 3
+
+LOG                      ROWS   LEAVES    TOTAL     COPY    QUERY INS µs/row    FETCH     TREE         SIZE     MEMORY       UPDATE
+----------------------------------------------------------------------------------------------------------------------------------------------------
+load_test_0             18487    19998      286      249        0       13.3        9  26(1.2)         5.1M   1019.1MB     00:17:46
+load_test_1             18553    19998      288      254        0       13.5        6  27(1.2)         5.1M   1019.1MB     00:17:47
+load_test_2             19109    19998      276      240        0       12.4        7  27(1.2)         5.0M   1017.0MB     00:17:45

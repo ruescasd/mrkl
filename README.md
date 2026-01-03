@@ -501,14 +501,17 @@ not in-memory merkle tree operations (which usually complete in under 1ms). In a
   achieving a 10x performance improvement
     * TODO: consider postgresql COPY for even greater (though probably marginal) improvement
 
-#### `merkle_log` fetches
+#### `merkle_log` indexes
 
-Fetch performance on `merkle_log` benefits from a composite index on `(log_name, id)`:
+The `merkle_log` table has carefully chosen indexes based on A/B performance testing:
 
-* **Startup rebuild**: `WHERE log_name = ? ORDER BY id` (loads all entries for each log)
-* **Last processed tracking**: `WHERE log_name = ? AND source_table = ?` (finds last processed ID per source)
+* **Primary key on `id`**: Sequential ID for global ordering across all logs.
 
-This index is created automatically by the setup script.
+* **Index on `(log_name, id)`**: A/B testing showed this index improves INSERT performance by ~10-15%, likely by helping with UNIQUE constraint checking or improving B-tree locality during insertions.
+
+* **UNIQUE constraint on `(log_name, source_table, source_id)`**: Ensures no duplicate entries and provides deduplication during INSERT.
+
+These indexes are created automatically by the setup script.
 
 #### Source table contention
 

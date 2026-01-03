@@ -145,7 +145,7 @@ impl SourceConfig {
 /// Note: each log is processed serially, but errors are independently handled: an error 
 /// in one log does not affect others.
 pub async fn run_batch_processor(app_state: AppState) {
-    let batch_size: u32 = 10000;
+    let batch_size: u32 = 30000;
     let interval = std::time::Duration::from_secs(1);
 
     loop {
@@ -413,6 +413,11 @@ async fn copy_source_rows_db(
         ));
     }
     
+    // Increase work_mem for the sort operation in the CTE
+    // Default PostgreSQL work_mem (4MB) may cause disk-based sorts for large batches
+    // Testing showed minimal impact (~8ms difference), so 32MB is sufficient
+    txn.execute("SET LOCAL work_mem = '32MB'", &[]).await?;
+    
     // Time the query preparation phase (getting last processed IDs)
     let query_start = std::time::Instant::now();
     
@@ -436,7 +441,7 @@ async fn copy_source_rows_db(
         let last_processed_idx = param_values.len();
         
         // Add batch_size as a parameter for this source's LIMIT
-        param_values.push(i64::from(batch_size * 5));
+        param_values.push(i64::from(batch_size));
         let limit_idx = param_values.len();
         
         // Build SELECT with LIMIT per source table to cap rows fetched
@@ -506,7 +511,7 @@ async fn copy_source_rows_db(
         all_params.push(p);
     }
     
-    let batch_size_i64 = i64::from(batch_size * 5);
+    let batch_size_i64 = i64::from(batch_size * valid_configs.len() as u32);
     all_params.push(&batch_size_i64);
     all_params.push(&log_name);
     
