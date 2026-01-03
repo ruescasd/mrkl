@@ -18,10 +18,8 @@ pub struct LogMetrics {
     pub last_total_ms: u64,
     /// Time for `copy_source_rows` operation (ms)
     pub last_copy_ms: u64,
-    /// Time to query source tables (ms)
-    pub last_query_sources_ms: u64,
-    /// Time to insert into `merkle_log` (ms)
-    pub last_insert_merkle_log_ms: u64,
+    /// Time for INSERT operation (ms) - includes CTE query, sort, and insert
+    pub last_insert_ms: u64,
     /// Time to fetch new entries from `merkle_log` (ms)
     pub last_fetch_merkle_log_ms: u64,
     /// Time to update in-memory tree (includes write lock hold time) (ms)
@@ -46,8 +44,7 @@ impl LogMetrics {
             last_batch_leaves: 0,
             last_total_ms: 0,
             last_copy_ms: 0,
-            last_query_sources_ms: 0,
-            last_insert_merkle_log_ms: 0,
+            last_insert_ms: 0,
             last_fetch_merkle_log_ms: 0,
             last_tree_update_ms: 0,
             batches_processed: 0,
@@ -67,8 +64,7 @@ impl LogMetrics {
         leaves_added: u64,
         total_ms: u64,
         copy_ms: u64,
-        query_sources_ms: u64,
-        insert_merkle_log_ms: u64,
+        insert_ms: u64,
         fetch_merkle_log_ms: u64,
         tree_update_ms: u64,
         tree_size: u64,
@@ -77,8 +73,7 @@ impl LogMetrics {
         self.last_batch_leaves = leaves_added;
         self.last_total_ms = total_ms;
         self.last_copy_ms = copy_ms;
-        self.last_query_sources_ms = query_sources_ms;
-        self.last_insert_merkle_log_ms = insert_merkle_log_ms;
+        self.last_insert_ms = insert_ms;
         self.last_fetch_merkle_log_ms = fetch_merkle_log_ms;
         self.last_tree_update_ms = tree_update_ms;
         self.batches_processed += 1;

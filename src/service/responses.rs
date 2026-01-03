@@ -191,10 +191,8 @@ pub struct LogMetricsResponse {
     pub last_total_ms: u64,
     /// Time to copy source rows (ms)
     pub last_copy_ms: u64,
-    /// Time to query sources (ms)
-    pub last_query_sources_ms: u64,
-    /// Time to insert into `merkle_log` (ms)
-    pub last_insert_merkle_log_ms: u64,
+    /// Time for INSERT operation (ms) - includes CTE query, sort, and insert
+    pub last_insert_ms: u64,
     /// Time to fetch from `merkle_log` (ms)
     pub last_fetch_merkle_log_ms: u64,
     /// Time to update merkle tree (ms)

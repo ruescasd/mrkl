@@ -1,8 +1,6 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use deadpool_postgres::{Object as PooledConnection, Transaction};
-use std::collections::{BTreeSet, hash_map::DefaultHasher};
-use std::fmt::Write;
+use deadpool_postgres::Object as PooledConnection;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::LeafHash;
@@ -102,10 +100,8 @@ async fn ensure_merkle_log_table_exists(conn: &PooledConnection, log_name: &str)
 pub struct BatchStats {
     /// Number of rows copied from source tables to `merkle_log_{log_name}`
     pub rows_copied: u64,
-    /// Time spent querying source tables (ms)
-    pub query_sources_ms: u64,
-    /// Time spent inserting into `merkle_log` (ms)
-    pub insert_merkle_log_ms: u64,
+    /// Time spent on the INSERT operation (ms) - includes CTE query, sort, and insert
+    pub insert_ms: u64,
 }
 
 /// CRITICAL ARCHITECTURAL NOTE: `merkle_log_{log_name}` is GROUND TRUTH
@@ -133,56 +129,6 @@ pub struct BatchStats {
 /// - Rebuild from source tables is NOT deterministic (would produce different merkle roots)
 /// - `merkle_log_{log_name}` must be backed up and preserved for disaster recovery
 /// - This is correct behavior for append-only transparency logs
-///
-/// Represents a row from a source table ready to be inserted into `merkle_log`
-/// Implements Ord for universal ordering: (timestamp, id, `table_name`)
-#[derive(Debug, Clone, Eq)]
-struct SourceRow {
-    /// Name of the source table this row came from
-    source_table: String,
-    /// ID of the row in the source table
-    source_id: i64,
-    /// SHA256 hash of the leaf data
-    leaf_hash: Vec<u8>,
-    /// Optional timestamp for ordering (timestamped entries sort before non-timestamped)
-    order_timestamp: Option<DateTime<Utc>>,
-}
-
-impl PartialEq for SourceRow {
-    fn eq(&self, other: &Self) -> bool {
-        self.order_timestamp == other.order_timestamp
-            && self.source_id == other.source_id
-            && self.source_table == other.source_table
-    }
-}
-
-impl Ord for SourceRow {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Primary: timestamp (None sorts after Some for our use case)
-        // Secondary: source_id (guaranteed unique per table)
-        // Tertiary: source_table (for complete determinism)
-        match (&self.order_timestamp, &other.order_timestamp) {
-            (Some(a), Some(b)) => a
-                .cmp(b)
-                .then_with(|| self.source_id.cmp(&other.source_id))
-                .then_with(|| self.source_table.cmp(&other.source_table)),
-            (Some(_), None) => std::cmp::Ordering::Less, // Timestamped entries come first
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => {
-                // Both have no timestamp, sort by id then table
-                self.source_id
-                    .cmp(&other.source_id)
-                    .then_with(|| self.source_table.cmp(&other.source_table))
-            }
-        }
-    }
-}
-
-impl PartialOrd for SourceRow {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
 
 /// Configuration for a source table that feeds into the merkle log table
 #[derive(Debug, Clone)]
@@ -354,7 +300,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
     // Copy pending entries into merkle_log_{log_name}
     
     // let batch_stats = copy_source_rows(app_state, log_name, batch_size).await?;
-    let batch_stats = copy_source_rows_db(app_state, log_name, batch_size).await?;
+    let batch_stats = copy_source_rows(app_state, log_name, batch_size).await?;
 
     let copy_duration = copy_start.elapsed();
 
@@ -406,8 +352,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
                     leaves_added as u64,
                     u64_millis(total_duration.as_millis()),
                     u64_millis(copy_duration.as_millis()),
-                    batch_stats.query_sources_ms,
-                    batch_stats.insert_merkle_log_ms,
+                    batch_stats.insert_ms,
                     u64_millis(fetch_duration.as_millis()),
                     u64_millis(tree_duration.as_millis()),
                     final_tree_size,
@@ -429,7 +374,6 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
                     0,
                     0,
                     0,
-                    0,
                     tree_size,
                 );
             });
@@ -438,20 +382,14 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
     Ok(())
 }
 
-/// When using bulk inserts, we process in chunks to avoid postgresql parameter limit 
-/// This limit is ~32K (probably 32,767) parameters (= ~6.5K rows × 5 params)
-/// 1000 rows × 5 params = 5000 parameters (well under limit)
-const CHUNK_SIZE: usize = 3000;
-
-/// Database-native version of copy_source_rows using pure SQL with CTE and UNION ALL
+/// Copies pending rows from source tables to the per-log merkle table using pure SQL.
 /// 
-/// This version eliminates network overhead by performing the entire copy operation
-/// within the database using a single query. All source tables are combined with
-/// UNION ALL, ordered according to the Rust ordering semantics, and inserted directly
+/// This implementation uses a CTE with UNION ALL to combine all source tables,
+/// ordered according to the Rust ordering semantics, and inserted directly
 /// into the per-log table `merkle_log_{log_name}`.
 /// 
 /// Returns statistics about the batch processing operation
-async fn copy_source_rows_db(
+async fn copy_source_rows(
     app_state: &AppState,
     log_name: &str,
     batch_size: u32,
@@ -472,8 +410,7 @@ async fn copy_source_rows_db(
     if source_configs.is_empty() {
         return Ok(BatchStats {
             rows_copied: 0,
-            query_sources_ms: 0,
-            insert_merkle_log_ms: 0,
+            insert_ms: 0,
         });
     }
     
@@ -483,8 +420,7 @@ async fn copy_source_rows_db(
     if valid_configs.is_empty() {
         return Ok(BatchStats {
             rows_copied: 0,
-            query_sources_ms: 0,
-            insert_merkle_log_ms: 0,
+            insert_ms: 0,
         });
     }
     
@@ -508,8 +444,8 @@ async fn copy_source_rows_db(
     // Testing showed minimal impact (~8ms difference), so 32MB is sufficient
     txn.execute("SET LOCAL work_mem = '32MB'", &[]).await?;
     
-    // Time the query preparation phase (getting last processed IDs)
-    let query_start = std::time::Instant::now();
+    // Time the entire INSERT operation (query building, CTE execution, and insert)
+    let insert_start = std::time::Instant::now();
     
     // Build UNION ALL query dynamically for all source tables
     // Each source table needs its own LIMIT to avoid fetching unbounded rows
@@ -557,11 +493,6 @@ async fn copy_source_rows_db(
         
         union_parts.push(select);
     }
-    
-    let query_duration = query_start.elapsed();
-    
-    // Time the main CTE + INSERT operation
-    let insert_start = std::time::Instant::now();
     
     // Build the full query with CTE, ordering (matching Rust semantics), and INSERT
     // ORDER BY: timestamp NULLS LAST (timestamped entries first), then source_id, then source_table
@@ -611,236 +542,8 @@ async fn copy_source_rows_db(
     
     Ok(BatchStats {
         rows_copied: rows_affected,
-        query_sources_ms: u64_millis(query_duration.as_millis()),
-        insert_merkle_log_ms: u64_millis(insert_duration.as_millis()),
+        insert_ms: u64_millis(insert_duration.as_millis()),
     })
-}
-
-/// Process a batch of rows from configured source tables into `merkle_log` for a specific log
-/// 
-/// This function
-/// 
-/// 1) Loads source configurations for the log
-/// 2) Validates that source tables exist
-/// 3) Queries pending rows from source tables up to `batch_size` total
-/// 4) Inserts the rows into `merkle_log` with globally unique IDs
-/// 
-/// Returns statistics about the batch processing operation
-async fn copy_source_rows(
-    app_state: &AppState,
-    log_name: &str,
-    batch_size: u32,
-) -> Result<BatchStats> {
-    // Get connection from pool
-    let mut conn = app_state.db_pool.get().await?;
-
-    // Load source configurations from database for this log
-    let source_configs = load_source_configs(&conn, log_name).await?;
-
-    // If no sources configured, nothing to do
-    if source_configs.is_empty() {
-        return Ok(BatchStats {
-            rows_copied: 0,
-            query_sources_ms: 0,
-            insert_merkle_log_ms: 0,
-        });
-    }
-
-    // Filter to only tables that actually exist (skip missing tables with warning)
-    let valid_configs = get_valid_source_tables(&conn, &source_configs).await?;
-
-    // If no valid sources after filtering, nothing to do
-    if valid_configs.is_empty() {
-        return Ok(BatchStats {
-            rows_copied: 0,
-            query_sources_ms: 0,
-            insert_merkle_log_ms: 0,
-        });
-    }
-
-    // Start transaction
-    let txn = conn.transaction().await?;
-
-    // Advisory lock prevents concurrent execution for this specific log.
-    // In the current implementation this is not strictly necessary but
-    // protects against future changes that might process logs in parallel.
-    // Use log name to generate unique lock ID
-    let lock_id = hash_string_to_i64(log_name);
-    let lock_acquired: bool = txn
-        .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&lock_id])
-        .await?
-        .get(0);
-
-    if !lock_acquired {
-        return Err(anyhow::anyhow!(
-            "Another processing batch is running for log '{log_name}'"
-        ));
-    }
-
-    let query_start = std::time::Instant::now();
-    let rows_to_insert = get_source_rows(&txn, valid_configs, log_name, batch_size).await?;
-    let query_duration = query_start.elapsed();
-
-    // Get next available ID in merkle_log (globally unique across all logs)
-    let next_id: i64 = txn
-        .query_one("SELECT COALESCE(MAX(id), 0) + 1 FROM merkle_log", &[])
-        .await?
-        .get(0);
-    
-    let insert_start = std::time::Instant::now();
-
-    if !rows_to_insert.is_empty() {
-        // Insert into merkle_log with sequential IDs using multi-row INSERT
-        // Process in chunks to avoid PostgreSQL parameter limit (~32K (probably 32,767) parameters = ~6.5K rows × 5 params)
-        for (chunk_idx, chunk) in rows_to_insert.chunks(CHUNK_SIZE).enumerate() {
-            // usize::MAX * usize::MAX << u64::MAX
-            #[allow(clippy::arithmetic_side_effects)]
-            let chunk_offset: u64 = chunk_idx as u64 * CHUNK_SIZE as u64;
-
-            // Build multi-row INSERT statement for this chunk
-            // INSERT INTO merkle_log (...) VALUES ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), ...
-            let mut query = String::from(
-                "INSERT INTO merkle_log (id, log_name, source_table, source_id, leaf_hash) VALUES ",
-            );
-            let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-
-            for (offset, _) in chunk.iter().enumerate() {
-                if offset > 0 {
-                    query.push_str(", ");
-                }
-                // CHUNK_SIZE * 5 << usize::MAX
-                #[allow(clippy::arithmetic_side_effects)]
-                let base = offset * 5;
-                // CHUNK_SIZE * 5 << usize::MAX
-                #[allow(clippy::arithmetic_side_effects)]
-                {
-                    let _ = write!(
-                        &mut query,
-                        "(${}, ${}, ${}, ${}, ${})",
-                        base + 1,
-                        base + 2,
-                        base + 3,
-                        base + 4,
-                        base + 5
-                    );
-                }
-            }
-
-            // Flatten parameters for this chunk: for each row, add (id, log_name, source_table, source_id, leaf_hash)
-            let mut param_values: Vec<(i64, &str, &str, i64, &[u8])> = Vec::new();
-            for (offset, source_row) in chunk.iter().enumerate() {
-                // (<< u64::MAX) + usize::MAX << u64::MAX
-                #[allow(clippy::arithmetic_side_effects)]
-                let all_offset = (chunk_offset + offset as u64).cast_signed();
-                // the total number of log entries will never approach i64::MAX in practice
-                #[allow(clippy::arithmetic_side_effects)]
-                let merkle_id = next_id + all_offset;
-                param_values.push((
-                    merkle_id,
-                    log_name,
-                    &source_row.source_table,
-                    source_row.source_id,
-                    &source_row.leaf_hash,
-                ));
-            }
-
-            // Build params vector with correct types
-            for pv in &param_values {
-                params.push(&pv.0); // id
-                params.push(&pv.1); // log_name
-                params.push(&pv.2); // source_table
-                params.push(&pv.3); // source_id
-                params.push(&pv.4); // leaf_hash
-            }
-
-            txn.execute(&query, &params).await?;
-        }
-    }
-
-    let insert_duration = insert_start.elapsed();
-    txn.commit().await?;
-
-    Ok(BatchStats {
-        rows_copied: rows_to_insert.len() as u64,
-        query_sources_ms: u64_millis(query_duration.as_millis()),
-        insert_merkle_log_ms: u64_millis(insert_duration.as_millis()),
-    })
-}
-
-/// Retrieves rows from all valid source tables for a specific log, up to `batch_size` total
-/// 
-/// Pending rows to retrieve are those with `source_id` greater than the last processed `source_id`
-/// for each source table in the merkle log table.
-/// 
-/// Returns up to `batch_size` * 2 - 1 total `SourceRow`s
-async fn get_source_rows(txn: &Transaction<'_>, valid_configs: Vec<SourceConfig>, log_name: &str, batch_size: u32) -> Result<Vec<SourceRow>> {
-
-    // Collect rows from all configured source tables into a BTreeSet for automatic sorting
-    let mut all_source_rows = BTreeSet::new();
-
-    for source_config in &valid_configs {
-        // Get last processed source_id for this specific source table in this log
-        let last_processed: i64 = txn
-            .query_one(
-                "SELECT COALESCE(MAX(source_id), 0) FROM merkle_log WHERE log_name = $1 AND source_table = $2",
-                &[&log_name, &source_config.table_name],
-            )
-            .await?
-            .get(0);
-
-        // Build query based on whether timestamp column is configured
-        let query = if let Some(ref timestamp_col) = source_config.timestamp_column {
-            format!(
-                "SELECT {}, {}, {} FROM {} WHERE {} > $1 ORDER BY {} LIMIT $2",
-                source_config.id_column,
-                source_config.hash_column,
-                timestamp_col,
-                source_config.table_name,
-                source_config.id_column,
-                source_config.id_column
-            )
-        } else {
-            format!(
-                "SELECT {}, {} FROM {} WHERE {} > $1 ORDER BY {} LIMIT $2",
-                source_config.id_column,
-                source_config.hash_column,
-                source_config.table_name,
-                source_config.id_column,
-                source_config.id_column
-            )
-        };
-
-        let rows = txn.query(&query, &[&last_processed, &(i64::from(batch_size) )]).await?;
-        for row in rows {
-            let source_id: i64 = row.get(0);
-            let leaf_hash: Vec<u8> = row.get(1);
-            let order_timestamp: Option<DateTime<Utc>> = if source_config.timestamp_column.is_some()
-            {
-                row.get(2)
-            } else {
-                None
-            };
-
-            all_source_rows.insert(SourceRow {
-                source_table: source_config.table_name.clone(),
-                source_id,
-                leaf_hash,
-                order_timestamp,
-            });
-        }
-
-        // Stop querying once we have enough rows to avoid unnecessary database queries
-        // Worst case: we process up to (batch_size * 2 - 1) rows, which is acceptable
-        if all_source_rows.len() >= batch_size as usize {
-            break;
-        }
-    }
-
-    // BTreeSet automatically maintains sorted order, convert to Vec
-    let rows_to_insert = Vec::from_iter(all_source_rows);
-
-    Ok(rows_to_insert)
-    
 }
 
 /// Rebuilds all enabled logs from the database on startup
