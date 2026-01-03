@@ -511,24 +511,24 @@ async fn test_source_log_setup() -> Result<()> {
         .wait_until_log_size("test_log_multi_source", expected_size)
         .await?;
 
-    // Verify entries were processed into merkle_log from all sources
+    // Verify entries were processed into per-log merkle table from all sources
     let rows = client.get_sources("test_log_multi_source").await?;
 
     assert!(rows.len() >= 5, "Should have processed at least 5 entries");
 
-    // Verify merkle_log IDs are strictly increasing (monotonic)
-    // They won't be sequential (1,2,3...) because the ID sequence is shared across all logs
+    // Verify IDs are strictly increasing (monotonic) within the log
+    // With per-log tables, IDs are sequential (no gaps from other logs)
     for i in 1..rows.len() {
         let prev_id: i64 = rows.get(i - 1).expect("prev row exists").get(2);
         let curr_id: i64 = rows.get(i).expect("curr row exists").get(2);
         assert!(
             curr_id > prev_id,
-            "Merkle log IDs should be strictly increasing: {curr_id} should be > {prev_id}"
+            "Log IDs should be strictly increasing: {curr_id} should be > {prev_id}"
         );
     }
 
     println!("\n✅ Multi-source test complete!");
-    println!("   - {} total entries in merkle_log", rows.len());
+    println!("   - {} total entries in merkle_log_test_log_multi_source", rows.len());
     println!(
         "   - Entries from {} different sources",
         rows.iter()

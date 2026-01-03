@@ -23,7 +23,7 @@ pub mod state;
 pub mod validation;
 
 pub use client::Client;
-pub use processor::rebuild_all_logs;
+pub use processor::{rebuild_all_logs, validate_log_name};
 pub use responses::{
     ApiError, ApiResponse, ConsistencyProofResponse, GlobalMetricsResponse, HasLeafResponse,
     HasLogResponse, HasRootResponse, InclusionProofResponse, LogMetricsResponse, MetricsResponse,

@@ -6,9 +6,9 @@ Verifiable logs for PostgreSQL tables
 
 mrkl provides **tamper-evident append-only logs** for PostgreSQL tables using the same cryptographic primitives as [Certificate Transparency](https://certificate.transparency.dev/howctworks/).
 
-**How it works**: Configure source tables as "verifiable logs" - mrkl continuously copies entries to a committed order in `merkle_log`, building Merkle trees in memory. Clients can request:
+**How it works**: Configure source tables as "verifiable logs" - mrkl continuously copies entries to per-log tables (`merkle_log_{log_name}`), building Merkle trees in memory. Clients can request:
 - **Inclusion proofs** - verify an entry exists in the log
-- **Consistency proofs** - verify the log only appended (no deletions/modifications)S
+- **Consistency proofs** - verify the log only appended (no deletions/modifications)
 
 **Security properties** (see [RFC 6962](https://datatracker.ietf.org/doc/html/rfc6962)):
 - ✅ Tamper detection - any modification invalidates cryptographic proofs
@@ -42,19 +42,21 @@ mrkl provides **tamper-evident append-only logs** for PostgreSQL tables using th
 cargo run --bin setup --release
 ```
 
-The following tables are created
+The following tables are created:
 
-* `merkle_log`
+* `verification_logs`
 
-    The ground truth for verifiable logs; this is where entries from verifiable sources are copied to in a committed order, its rows correspond to leaves of a merkle tree.
+    A collection of one or more verification_sources. Proofs of inclusion and consistency are computed over a verifiable log as a unit, combining its sources.
+    
+    **Log name restrictions**: Log names must match `[a-z0-9_]+` (lowercase letters, digits, underscores) and cannot start with a digit. This ensures safe use as PostgreSQL table name suffixes.
 
 * `verification_sources`
 
     A source of entries for a verifiable log. These point to the pre-existing tables you wish to make verifiable.
 
-* `verification_logs`
+* `merkle_log_{log_name}` (created dynamically)
 
-    A collection of one or more verification_sources. Proofs of inclusion and consistency are computed over a verifiable log as a unit, combining its sources.
+    Per-log tables created automatically when a log is first processed. Each table stores the ground truth for that log - entries copied from sources in committed order, corresponding to merkle tree leaves.
 
 ### Running the server
 
@@ -63,7 +65,7 @@ The following tables are created
 cargo run --bin main --release
 ```
 This binary runs
-- **Batch Processor** - Continuously monitors source tables and updates `merkle_log` and in-memory merkle trees.
+- **Batch Processor** - Continuously monitors source tables and updates per-log merkle tables and in-memory merkle trees.
 - **HTTP API** - Serves proofs and tree state queries using in-memory data (the HTTP threads do not perform database access).
 
 ### Example: Inclusion Proof
@@ -495,23 +497,31 @@ The lint configuration is relatively strict, it can be found in `Cargo.toml`.
 
 #### Batch processor optimization
 
-The batch processor's primary bottleneck is PostgreSQL inserts and and queries, 
-not in-memory merkle tree operations (which usually complete in under 1ms). In a high insert rate scenario, the number of copied rows per batch can be large, which can benefit from
+The batch processor's primary bottleneck is PostgreSQL inserts and queries, 
+not in-memory merkle tree operations (which usually complete in under 1ms). In a high insert rate scenario, the number of copied rows per batch can be large, which can benefit from:
 * Multi-row INSERTs: The processor uses batch INSERTs instead of individual row inserts, 
   achieving a 10x performance improvement
     * TODO: consider postgresql COPY for even greater (though probably marginal) improvement
 
-#### `merkle_log` indexes
+#### Per-log table architecture
 
-The `merkle_log` table has carefully chosen indexes based on A/B performance testing:
+Each log has its own dedicated table (`merkle_log_{log_name}`) rather than a shared table with a `log_name` column. This provides:
 
-* **Primary key on `id`**: Sequential ID for global ordering across all logs.
+* **Smaller indexes**: Each table maintains independent indexes, improving INSERT performance as indexes stay smaller and more cache-friendly
+* **Isolation**: Operations on one log don't affect others
+* **Future parallelization**: Enables concurrent processing of different logs
 
-* **Index on `(log_name, id)`**: A/B testing showed this index improves INSERT performance by ~10-15%, likely by helping with UNIQUE constraint checking or improving B-tree locality during insertions.
+#### `merkle_log_{log_name}` indexes
 
-* **UNIQUE constraint on `(log_name, source_table, source_id)`**: Ensures no duplicate entries and provides deduplication during INSERT.
+Each per-log table has these indexes:
 
-These indexes are created automatically by the setup script.
+* **Primary key on `id`**: Sequential ID for ordering within the log (each table has its own BIGSERIAL sequence)
+
+* **Index on `id`**: Additional index for efficient range queries
+
+* **UNIQUE constraint on `(source_table, source_id)`**: Defense-in-depth against duplicate entries. Given that source IDs are unique per table, we copy with `WHERE source_id > last_processed`, and operations are transactional, duplicates are logically impossible. This constraint catches programming bugs and could be removed as a future optimization if INSERT performance becomes critical.
+
+These indexes are created automatically when a log is first processed.
 
 #### Source table contention
 

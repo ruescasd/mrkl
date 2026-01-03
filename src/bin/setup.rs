@@ -1,7 +1,10 @@
 //! Database setup utility for mrkl
 //!
-//! Creates the necessary `PostgreSQL` tables and functions for mrkl operation.
-//! The schema includes `verification_logs`, `verification_sources`, and `merkle_log` tables.
+//! Creates the necessary `PostgreSQL` tables for mrkl operation.
+//! The schema includes `verification_logs` and `verification_sources` tables.
+//! 
+//! Note: Per-log merkle tables (`merkle_log_{log_name}`) are created dynamically
+//! by the batch processor when a log is first processed.
 //!
 #![allow(clippy::pedantic)]
 #![allow(clippy::print_stdout)]
@@ -33,15 +36,38 @@ async fn connect() -> Result<Client> {
     Ok(client)
 }
 
-/// Sets up the database schema, including the table, function, and trigger.
+/// Sets up the database schema, including the configuration tables.
 /// If reset is true, it will drop and recreate all objects.
+/// 
+/// Note: Per-log merkle tables (merkle_log_{log_name}) are created dynamically
+/// by the batch processor, not by this setup script.
 async fn setup_database(client: &Client, reset: bool) -> Result<()> {
     if reset {
         println!("🗑️ Dropping existing objects...");
+        
+        // Drop all merkle_log_* tables dynamically
+        let tables = client
+            .query(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'merkle_log_%'",
+                &[],
+            )
+            .await?;
+        
+        for row in tables {
+            let table_name: &str = row.get(0);
+            let drop_query = format!("DROP TABLE IF EXISTS {} CASCADE", table_name);
+            client.batch_execute(&drop_query).await?;
+            println!("  Dropped table '{}'", table_name);
+        }
+        
+        // Drop legacy shared merkle_log table if it exists
+        client
+            .batch_execute("DROP TABLE IF EXISTS merkle_log CASCADE;")
+            .await?;
+        
         client
             .batch_execute(
                 r#"
-            DROP TABLE IF EXISTS merkle_log CASCADE;
             DROP TABLE IF EXISTS verification_sources CASCADE;
             DROP TABLE IF EXISTS verification_logs CASCADE;
         "#,
@@ -83,38 +109,10 @@ async fn setup_database(client: &Client, reset: bool) -> Result<()> {
         )
         .await?;
     println!("✅ Table 'verification_sources' is ready.");
-
-    // 3. Create the merkle log table with strict controls - supports multiple logs and sources
-    // CRITICAL: ON DELETE RESTRICT protects ground truth - merkle_log cannot be rebuilt from sources
-    // To delete a log, you must explicitly delete its merkle_log entries first
-    client
-        .batch_execute(
-            r#"
-        CREATE TABLE IF NOT EXISTS merkle_log (
-            id BIGSERIAL PRIMARY KEY,
-            log_name TEXT NOT NULL REFERENCES verification_logs(log_name) ON DELETE RESTRICT,
-            source_table TEXT NOT NULL,
-            source_id BIGINT NOT NULL,
-            leaf_hash BYTEA NOT NULL,
-            processed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            CONSTRAINT merkle_log_immutable CHECK (processed_at = processed_at),
-            UNIQUE (log_name, source_table, source_id)
-        );
-    "#,
-        )
-        .await?;
-
-    // Create index for efficient queries by log
-    // A/B testing showed this index improves INSERT performance (~10-15% faster)
-    // likely by helping with UNIQUE constraint checking or B-tree locality
-    client
-        .batch_execute(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_merkle_log_by_log ON merkle_log(log_name, id);
-        "#,
-        )
-        .await?;
-    println!("✅ Table 'merkle_log' is ready.");
+    
+    // Note: Per-log merkle tables (merkle_log_{log_name}) are created dynamically
+    // by the batch processor when a log is first processed.
+    println!("ℹ️  Per-log merkle tables will be created automatically when logs are processed.");
 
     Ok(())
 }

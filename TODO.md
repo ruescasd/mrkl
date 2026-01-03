@@ -44,8 +44,9 @@
 **Phase 2 Complete!** ✨
 
 **Architecture Notes**:
-- merkle_log.id is a global SERIAL sequence shared across all logs
-- IDs are monotonically increasing per log but not sequential (gaps from other logs)
+- Each log has its own table: `merkle_log_{log_name}` with independent BIGSERIAL sequence
+- IDs are monotonically increasing and sequential within each log (no gaps)
+- Log names must match `[a-z0-9_]+` pattern (validated at runtime)
 - Each log maintains independent merkle tree state in memory
 - Processor and HTTP server share only DashMap (designed for concurrent access)
 - No database contention from HTTP requests (memory-only operations)
@@ -193,32 +194,31 @@
 ## 📝 Design Notes
 
 **Current Architecture**:
-- Multiple independent logs, each with their own merkle tree
+- Multiple independent logs, each with their own merkle tree and dedicated table
 - verification_logs table defines available logs (log_name, enabled flag)
 - verification_sources maps source tables to logs (composite PK: source_table, log_name)
   - id_column (required): Must be unique per table for ordering guarantees
   - timestamp_column (optional): Enables chronological ordering
-- merkle_log stores entries with log_name FK
+- Per-log tables (`merkle_log_{log_name}`) store entries with independent BIGSERIAL sequences
 - DashMap<String, Arc<RwLock<MerkleState>>> provides concurrent per-log state
 - Startup rebuild ensures in-memory trees match database before serving requests
 - Batch processor: sole owner of all database operations (clean separation)
 - HTTP handlers: memory-only operations, read from DashMap (fast, no DB contention)
-- Sequential global merkle_log.id (SERIAL) - monotonic per log with gaps
 - Universal ordering: (Option<Timestamp>, id, table_name) provides chronological ordering with graceful degradation
 
 **Key Invariants**:
-1. No gaps in merkle_log.id sequence **globally** (per-log may have gaps from other logs)
-2. Tree only updated from committed merkle_log data
-3. **merkle_log is ground truth and CANNOT be reconstructed deterministically from source tables**
+1. Per-log ID monotonicity: Each log's `merkle_log_{log_name}.id` is sequential with no gaps
+2. Tree only updated from committed per-log table data
+3. **Per-log tables are ground truth and CANNOT be reconstructed deterministically from source tables**
    - Batch boundaries create different orderings depending on when batches run
    - Late-arriving entries with earlier timestamps cannot be retroactively inserted
    - Same source data produces different merkle roots depending on batching pattern
-   - Therefore: merkle_log must be preserved and backed up for disaster recovery
+   - Therefore: per-log tables must be preserved and backed up for disaster recovery
 4. Batch processor holds advisory lock per log during processing
 5. All database writes happen in batch processor only
 6. id_column must be unique per source table (typically primary key or unique constraint)
 
-**Why merkle_log Cannot Be Rebuilt from Sources**:
+**Why per-log tables Cannot Be Rebuilt from Sources**:
 
 Example demonstrating non-determinism:
 - Scenario 1 (Two batches): 9 timestamped entries + X (no timestamp) → X at position 10

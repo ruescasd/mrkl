@@ -203,18 +203,18 @@ impl TestClient {
 
     // ===== Test Assertion Utilities =====
 
-    /// Gets all sources from `merkle_log` for a given log
+    /// Gets all sources from per-log merkle table for a given log
     ///
     /// # Errors
     ///
     /// Returns an error if the database query fails.
     pub async fn get_sources(&self, log_name: &str) -> Result<Vec<tokio_postgres::Row>> {
-        let result = self.db_client
-            .query(
-                "SELECT source_table, source_id, id FROM merkle_log WHERE log_name = $1 ORDER BY id",
-                &[&log_name],
-            )
-            .await?;
+        let table_name = format!("merkle_log_{}", log_name);
+        let query = format!(
+            "SELECT source_table, source_id, id FROM {} ORDER BY id",
+            table_name
+        );
+        let result = self.db_client.query(&query, &[]).await?;
 
         Ok(result)
     }
@@ -225,22 +225,33 @@ impl TestClient {
     ///
     /// Returns an error if the database query fails.
     pub async fn show_recent_entries(&self, count: i64) -> Result<()> {
-        let rows = self.db_client
+        // Query all merkle_log_* tables and combine results
+        let tables = self.db_client
             .query(
-                "SELECT id, log_name, source_table, source_id FROM merkle_log ORDER BY id DESC LIMIT $1",
-                &[&count],
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'merkle_log_%'",
+                &[],
             )
             .await?;
 
-        println!("\n🔍 Last {count} entries in merkle_log:");
-        for row in rows.iter().rev() {
-            let id: i64 = row.get(0);
-            let log_name: String = row.get(1);
-            let source_table: String = row.get(2);
-            let source_id: i64 = row.get(3);
-            println!(
-                "  id={id}, log={log_name}, source={source_table}:{source_id}"
+        println!("\n🔍 Last {count} entries across all merkle_log tables:");
+        for table_row in &tables {
+            let table_name: &str = table_row.get(0);
+            let log_name = table_name.strip_prefix("merkle_log_").unwrap_or(table_name);
+            
+            let query = format!(
+                "SELECT id, source_table, source_id FROM {} ORDER BY id DESC LIMIT $1",
+                table_name
             );
+            let rows = self.db_client.query(&query, &[&count]).await?;
+
+            for row in rows.iter().rev() {
+                let id: i64 = row.get(0);
+                let source_table: String = row.get(1);
+                let source_id: i64 = row.get(2);
+                println!(
+                    "  id={id}, log={log_name}, source={source_table}:{source_id}"
+                );
+            }
         }
         println!();
         Ok(())

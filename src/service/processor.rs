@@ -9,10 +9,98 @@ use crate::LeafHash;
 use crate::service::metrics::LogMetrics;
 use crate::service::state::AppState;
 
+// ============================================================================
+// Log Name Validation and Table Naming
+// ============================================================================
+
+/// Validates that a log name contains only allowed characters.
+/// 
+/// Log names must match the pattern `[a-z0-9_]+` to ensure they can be safely
+/// used as PostgreSQL table name suffixes without quoting or escaping.
+/// 
+/// # Returns
+/// - `Ok(())` if the log name is valid
+/// - `Err` with description if invalid
+pub fn validate_log_name(log_name: &str) -> Result<()> {
+    if log_name.is_empty() {
+        return Err(anyhow::anyhow!("Log name cannot be empty"));
+    }
+    
+    if !log_name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        return Err(anyhow::anyhow!(
+            "Log name '{}' contains invalid characters. Only lowercase letters, digits, and underscores are allowed.",
+            log_name
+        ));
+    }
+    
+    // Cannot start with a digit (PostgreSQL identifier rule)
+    if log_name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        return Err(anyhow::anyhow!(
+            "Log name '{}' cannot start with a digit",
+            log_name
+        ));
+    }
+    
+    Ok(())
+}
+
+/// Returns the PostgreSQL table name for a log's merkle entries.
+/// 
+/// Each log has its own dedicated table named `merkle_log_{log_name}`.
+/// This provides isolation between logs and enables potential parallelization.
+/// 
+/// # Panics
+/// Panics if log_name is invalid. Callers should validate first with `validate_log_name`.
+fn merkle_log_table_name(log_name: &str) -> String {
+    debug_assert!(validate_log_name(log_name).is_ok(), "Invalid log name: {}", log_name);
+    format!("merkle_log_{}", log_name)
+}
+
+/// Creates the per-log merkle table if it doesn't exist.
+/// 
+/// Each log gets its own table with schema:
+/// - `id BIGSERIAL PRIMARY KEY` - Sequential ID for this log (monotonic)
+/// - `source_table TEXT NOT NULL` - Which source table this entry came from
+/// - `source_id BIGINT NOT NULL` - The ID in the source table
+/// - `leaf_hash BYTEA NOT NULL` - SHA256 hash of the entry
+/// - `processed_at TIMESTAMPTZ` - When the entry was added
+/// - `UNIQUE (source_table, source_id)` - Defense in depth against duplicates
+/// 
+/// The UNIQUE constraint is defense-in-depth: given that source IDs are unique per table,
+/// we copy with `WHERE source_id > last_processed`, and operations are transactional,
+/// duplicates are logically impossible. The constraint catches programming bugs and
+/// could be removed as a future optimization if INSERT performance is critical.
+async fn ensure_merkle_log_table_exists(conn: &PooledConnection, log_name: &str) -> Result<()> {
+    let table_name = merkle_log_table_name(log_name);
+    
+    // Use IF NOT EXISTS to make this idempotent
+    let create_table = format!(
+        r#"
+        CREATE TABLE IF NOT EXISTS {} (
+            id BIGSERIAL PRIMARY KEY,
+            source_table TEXT NOT NULL,
+            source_id BIGINT NOT NULL,
+            leaf_hash BYTEA NOT NULL,
+            processed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (source_table, source_id)
+        )
+        "#,
+        table_name
+    );
+    
+    conn.batch_execute(&create_table).await?;
+    
+    Ok(())
+}
+
+// ============================================================================
+// Batch Statistics and Architectural Notes
+// ============================================================================
+
 /// Statistics from a batch processing operation
 #[derive(Debug, Clone)]
 pub struct BatchStats {
-    /// Number of rows copied from source tables to `merkle_log`
+    /// Number of rows copied from source tables to `merkle_log_{log_name}`
     pub rows_copied: u64,
     /// Time spent querying source tables (ms)
     pub query_sources_ms: u64,
@@ -20,9 +108,9 @@ pub struct BatchStats {
     pub insert_merkle_log_ms: u64,
 }
 
-/// CRITICAL ARCHITECTURAL NOTE: `merkle_log` is GROUND TRUTH
+/// CRITICAL ARCHITECTURAL NOTE: `merkle_log_{log_name}` is GROUND TRUTH
 ///
-/// The ordering committed to `merkle_log` cannot be reconstructed deterministically from source tables alone.
+/// The ordering committed to `merkle_log_{log_name}` cannot be reconstructed deterministically from source tables alone.
 /// This is because:
 ///
 /// 1. **Batch boundaries matter**: Entries are sorted within each batch, not globally. The same entry might
@@ -41,13 +129,10 @@ pub struct BatchStats {
 ///    but they weren't available yet.
 ///
 /// Therefore:
-/// - Startup rebuild from `merkle_log` IS deterministic (correct behavior)
+/// - Startup rebuild from `merkle_log_{log_name}` IS deterministic (correct behavior)
 /// - Rebuild from source tables is NOT deterministic (would produce different merkle roots)
-/// - `merkle_log` must be backed up and preserved for disaster recovery
+/// - `merkle_log_{log_name}` must be backed up and preserved for disaster recovery
 /// - This is correct behavior for append-only transparency logs
-///
-/// UPDATE: it would be possible to make rebuilds deterministic by storing batch boundaries,
-/// this would also allow the storing of only published roots instead of checkpointing after each entry.
 ///
 /// Represents a row from a source table ready to be inserted into `merkle_log`
 /// Implements Ord for universal ordering: (timestamp, id, `table_name`)
@@ -99,7 +184,7 @@ impl PartialOrd for SourceRow {
     }
 }
 
-/// Configuration for a source table that feeds into the merkle log
+/// Configuration for a source table that feeds into the merkle log table
 #[derive(Debug, Clone)]
 pub struct SourceConfig {
     /// The name of the source table in the database
@@ -231,16 +316,16 @@ pub async fn run_batch_processor(app_state: AppState) {
     tracing::info!("Batch processor stopped");
 }
 
-/// Process a single log: copy rows from source tables to `merkle_log` and update tree
+/// Process a single log: copy rows from source tables to `merkle_log_{log_name}` and update tree
 /// 
 /// This function
 /// 1) Ensures merkle state exists for the log
-/// 2) Copies pending entries from source tables into `merkle_log`
-/// 3) Fetches new entries from `merkle_log` and updates the merkle tree
+/// 2) Copies pending entries from source tables into `merkle_log_{log_name}`
+/// 3) Fetches new entries from `merkle_log_{log_name}` and updates the merkle tree
 /// 4) Updates metrics for the log
 /// 
 /// Note: a log's merkle tree is not updated unless the entries have been successfully persisted
-/// to `merkle_log`, ensuring that published log information can always be reconstructed
+/// to `merkle_log_{log_name}`, ensuring that published log information can always be reconstructed
 /// from persisted data.
 async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> Result<()> {
     // Time the entire processing cycle
@@ -263,10 +348,10 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
     // Get the current merkle state and last processed ID
     let current_last_id = merkle_state_arc.read().last_processed_id;
 
-    // Time the copy from source tables to merkle_log
+    // Time the copy from source tables to per-log merkle table
     let copy_start = std::time::Instant::now();
 
-    // Copy pending entries into merkle_log
+    // Copy pending entries into merkle_log_{log_name}
     
     // let batch_stats = copy_source_rows(app_state, log_name, batch_size).await?;
     let batch_stats = copy_source_rows_db(app_state, log_name, batch_size).await?;
@@ -274,20 +359,17 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
     let copy_duration = copy_start.elapsed();
 
     if batch_stats.rows_copied > 0 {
-        // Time the retrieval from merkle_log
+        // Time the retrieval from merkle_log_{log_name}
         let fetch_start = std::time::Instant::now();
 
         // Query everything after our last known processed ID for this log
         let conn = app_state.db_pool.get().await?;
-        let fetch_result = conn
-            .query(
-                "SELECT id, leaf_hash
-                    FROM merkle_log
-                    WHERE log_name = $1 AND id > $2
-                    ORDER BY id",
-                &[&log_name, &current_last_id],
-            )
-            .await;
+        let table_name = merkle_log_table_name(log_name);
+        let fetch_query = format!(
+            "SELECT id, leaf_hash FROM {} WHERE id > $1 ORDER BY id",
+            table_name
+        );
+        let fetch_result = conn.query(&fetch_query, &[&current_last_id]).await;
 
         let fetch_duration = fetch_start.elapsed();
 
@@ -366,7 +448,7 @@ const CHUNK_SIZE: usize = 3000;
 /// This version eliminates network overhead by performing the entire copy operation
 /// within the database using a single query. All source tables are combined with
 /// UNION ALL, ordered according to the Rust ordering semantics, and inserted directly
-/// into `merkle_log`.
+/// into the per-log table `merkle_log_{log_name}`.
 /// 
 /// Returns statistics about the batch processing operation
 async fn copy_source_rows_db(
@@ -374,7 +456,15 @@ async fn copy_source_rows_db(
     log_name: &str,
     batch_size: u32,
 ) -> Result<BatchStats> {
+    // Validate log name before any database operations
+    validate_log_name(log_name)?;
+    
     let mut conn = app_state.db_pool.get().await?;
+    
+    // Ensure the per-log table exists (idempotent)
+    ensure_merkle_log_table_exists(&conn, log_name).await?;
+    
+    let table_name = merkle_log_table_name(log_name);
     
     // Load source configurations from database for this log
     let source_configs = load_source_configs(&conn, log_name).await?;
@@ -428,12 +518,12 @@ async fn copy_source_rows_db(
     
     for config in &valid_configs {
         // Get last processed source_id for this specific source table in this log
-        // NOTE: This query benefits from an index on (log_name, source_table, source_id DESC)
+        let last_processed_query = format!(
+            "SELECT COALESCE(MAX(source_id), 0) FROM {} WHERE source_table = $1::text",
+            table_name
+        );
         let last_processed: i64 = txn
-            .query_one(
-                "SELECT COALESCE(MAX(source_id), 0) FROM merkle_log WHERE log_name = $1 AND source_table = $2",
-                &[&log_name, &config.table_name],
-            )
+            .query_one(&last_processed_query, &[&config.table_name])
             .await?
             .get(0);
         
@@ -493,16 +583,15 @@ async fn copy_source_rows_db(
             ORDER BY timestamp_col NULLS LAST, source_id, source_table
             LIMIT ${}
         )
-        INSERT INTO merkle_log (log_name, source_table, source_id, leaf_hash)
+        INSERT INTO {} (source_table, source_id, leaf_hash)
         SELECT 
-            ${},
             source_table,
             source_id,
             leaf_hash
         FROM ordered",
         union_parts.join(" UNION ALL "),
         param_values.len() + 1,  // batch_size for final LIMIT
-        param_values.len() + 2   // log_name parameter
+        table_name
     );
     
     // Prepare all parameters
@@ -513,7 +602,6 @@ async fn copy_source_rows_db(
     
     let batch_size_i64 = i64::from(batch_size * valid_configs.len() as u32);
     all_params.push(&batch_size_i64);
-    all_params.push(&log_name);
     
     let rows_affected = txn.execute(&query, &all_params).await?;
     
@@ -818,18 +906,32 @@ pub async fn rebuild_all_logs(app_state: &AppState) -> Result<()> {
 
 /// Rebuilds a single log's merkle tree from the database
 /// 
-/// The log will be reconstructed from all entries in the merkle log table 
-/// for the specified log name, and placed into the in-memory merkle state map.
+/// The log will be reconstructed from all entries in the per-log merkle table 
+/// (`merkle_log_{log_name}`) and placed into the in-memory merkle state map.
 async fn rebuild_log(app_state: &AppState, log_name: &str) -> Result<()> {
+    // Validate log name
+    validate_log_name(log_name)?;
+    
     let conn = app_state.db_pool.get().await?;
+    let table_name = merkle_log_table_name(log_name);
+
+    // Check if the table exists before trying to query it
+    let table_exists: bool = conn
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)",
+            &[&table_name],
+        )
+        .await?
+        .get(0);
+    
+    if !table_exists {
+        tracing::debug!(log_name, "Log table does not exist yet");
+        return Ok(());
+    }
 
     // Fetch all entries for this log
-    let rows = conn
-        .query(
-            "SELECT id, leaf_hash FROM merkle_log WHERE log_name = $1 ORDER BY id",
-            &[&log_name],
-        )
-        .await?;
+    let query = format!("SELECT id, leaf_hash FROM {} ORDER BY id", table_name);
+    let rows = conn.query(&query, &[]).await?;
 
     if rows.is_empty() {
         tracing::debug!(log_name, "Log has no entries");
