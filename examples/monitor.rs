@@ -140,7 +140,7 @@ async fn main() -> Result<()> {
 async fn fetch_log_state(client: &Client, log_name: &str) -> Result<LogState> {
     let size = client.get_log_size(log_name).await?;
     let root = if size > 0 {
-        client.get_root(log_name).await?
+        client.get_root(log_name).await?.root
     } else {
         Vec::new()
     };

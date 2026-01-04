@@ -194,7 +194,61 @@ fn display_metrics(
     println!("Mode: {} | Press 'a' for average, 'l' for last", mode_str);
     println!();
 
+    // HTTP Metrics section (if available)
+    if let Some(http) = &metrics.http {
+        println!("─── HTTP Metrics ───");
+        println!(
+            "{:<12} {:>10} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            "ENDPOINT", "REQUESTS", "ERRORS", "<1ms", "<5ms", "<10ms", "<50ms", "<100ms", "≥100ms"
+        );
+
+        // Helper to format latency distribution as percentages
+        let format_latency = |ep: &trellis::service::metrics::EndpointMetricsSnapshot| {
+            let total = ep.requests;
+            if total == 0 {
+                return vec!["-".to_string(); 6];
+            }
+            ep.latency_buckets
+                .iter()
+                .map(|&count| {
+                    let pct = (count as f64 / total as f64) * 100.0;
+                    format!("{:.0}%", pct)
+                })
+                .collect()
+        };
+
+        let inc_latency = format_latency(&http.inclusion);
+        println!(
+            "{:<12} {:>10} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            "inclusion",
+            format_number(http.inclusion.requests),
+            format_number(http.inclusion.errors),
+            inc_latency.first().map_or("-", String::as_str),
+            inc_latency.get(1).map_or("-", String::as_str),
+            inc_latency.get(2).map_or("-", String::as_str),
+            inc_latency.get(3).map_or("-", String::as_str),
+            inc_latency.get(4).map_or("-", String::as_str),
+            inc_latency.get(5).map_or("-", String::as_str)
+        );
+
+        let con_latency = format_latency(&http.consistency);
+        println!(
+            "{:<12} {:>10} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            "consistency",
+            format_number(http.consistency.requests),
+            format_number(http.consistency.errors),
+            con_latency.first().map_or("-", String::as_str),
+            con_latency.get(1).map_or("-", String::as_str),
+            con_latency.get(2).map_or("-", String::as_str),
+            con_latency.get(3).map_or("-", String::as_str),
+            con_latency.get(4).map_or("-", String::as_str),
+            con_latency.get(5).map_or("-", String::as_str)
+        );
+        println!();
+    }
+
     // Header with global stats
+    println!("─── Batch Processor ───");
     let cycle_value = match mode {
         DisplayMode::Last => metrics.global.last_cycle_duration_ms,
         DisplayMode::Average => history.get_global_cycle_avg(),

@@ -6,6 +6,7 @@ use std::hash::{Hash, Hasher};
 use crate::LeafHash;
 use crate::service::metrics::LogMetrics;
 use crate::service::state::AppState;
+use crate::service::metrics::u64_millis;
 
 // ============================================================================
 // Log Name Validation and Table Naming
@@ -768,17 +769,6 @@ fn hash_string_to_i64(s: &str) -> i64 {
     let mut hasher = DefaultHasher::new();
     s.hash(&mut hasher);
     hasher.finish().cast_signed()
-}
-
-/// Safely converts u128 milliseconds to u64, capping at `u64::MAX`
-/// 
-/// This is used for timing metrics where u64 is expected.
-fn u64_millis(millis: u128) -> u64 {
-    if millis > u128::from(u64::MAX) {
-        u64::MAX
-    } else {
-        u64::try_from(millis).expect("millis <= u64::MAX")
-    }
 }
 
 /// Acquires an advisory lock for the given log name within the provided transaction.

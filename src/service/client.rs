@@ -9,6 +9,15 @@ use reqwest::Client as HttpClient;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 
+/// Root information returned by `get_root`
+#[derive(Debug, Clone)]
+pub struct RootInfo {
+    /// The root hash bytes
+    pub root: Vec<u8>,
+    /// The tree size at this root
+    pub tree_size: u64,
+}
+
 /// Production HTTP client for interacting with the merkle tree service
 pub struct Client {
     /// HTTP client for making requests to the API
@@ -58,13 +67,13 @@ impl Client {
         }
     }
 
-    /// Gets the current merkle root
+    /// Gets the current merkle root and tree size
     ///
     /// # Errors
     ///
     /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
     /// if the base64 decoding of the root bytes fails, or if the server returns an error status.
-    pub async fn get_root(&self, log_name: &str) -> Result<Vec<u8>> {
+    pub async fn get_root(&self, log_name: &str) -> Result<RootInfo> {
         let response = self
             .http_client
             .get(format!("{}/logs/{}/root", self.api_base_url, log_name))
@@ -77,7 +86,10 @@ impl Client {
             ApiResponse::Success(data) => {
                 // Decode base64 root to bytes
                 let root_bytes = base64::engine::general_purpose::STANDARD.decode(&data.merkle_root)?;
-                Ok(root_bytes)
+                Ok(RootInfo {
+                    root: root_bytes,
+                    tree_size: data.tree_size,
+                })
             }
             ApiResponse::Error { error, .. } => Err(anyhow::anyhow!("Error getting root: {error}")),
         }
@@ -146,7 +158,7 @@ impl Client {
     }
 
     /// Verifies that the current tree state is consistent with a previously observed state.
-    /// Returns true if the current tree is a descendant of `old_root` (i.e., old tree is a prefix).
+    /// Returns the new root if the current tree is a descendant of `old_root` (i.e., old tree is a prefix).
     ///
     /// # Errors
     ///
@@ -176,8 +188,18 @@ impl Client {
         hasher.update(data.as_bytes());
         let hash_result = hasher.finalize();
 
+        self.has_leaf_hash(log_name, &hash_result).await
+    }
+
+    /// Checks if a leaf (identified by its pre-computed hash) exists in the log
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails, if the response is invalid or malformed,
+    /// or if the server returns an error status.
+    pub async fn has_leaf_hash(&self, log_name: &str, hash: &[u8]) -> Result<bool> {
         let query = crate::service::HasLeafQuery {
-            hash: hash_result.to_vec(),
+            hash: hash.to_vec(),
         };
 
         // Make the request
@@ -196,6 +218,24 @@ impl Client {
                 Err(anyhow::anyhow!("Error checking leaf existence: {error}"))
             }
         }
+    }
+
+    /// Verifies an inclusion proof for a given leaf hash
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if proof verification fails due to cryptographic mismatch.
+    pub fn verify_inclusion_proof(&self, leaf_hash: &[u8], proof: &InclusionProof) -> Result<()> {
+        proof.verify(leaf_hash).map_err(|e| anyhow::anyhow!("Inclusion proof verification failed: {e}"))
+    }
+
+    /// Verifies a consistency proof between an old root and the proof's new root
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if proof verification fails due to cryptographic mismatch.
+    pub fn verify_consistency_proof(&self, old_root: &[u8], proof: &ConsistencyProof) -> Result<()> {
+        proof.verify(old_root).map_err(|e| anyhow::anyhow!("Consistency proof verification failed: {e}"))
     }
 
     /// Checks if a historical root exists in the log

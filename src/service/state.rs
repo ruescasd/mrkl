@@ -3,7 +3,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU8;
 
-use crate::service::metrics::Metrics;
+use crate::service::metrics::{HttpMetrics, Metrics};
 
 /// Processor state for graceful shutdown and pause control
 #[repr(u8)]
@@ -41,6 +41,8 @@ pub struct AppState {
     pub db_pool: deadpool_postgres::Pool,
     /// Processing metrics for monitoring and diagnostics
     pub metrics: Arc<Metrics>,
+    /// HTTP endpoint metrics (lock-free atomics)
+    pub http_metrics: Arc<HttpMetrics>,
     /// Processor state for graceful shutdown and pause control
     /// 0=Running, 1=Paused, 2=Stopping
     pub processor_state: Arc<AtomicU8>,

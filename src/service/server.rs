@@ -85,6 +85,7 @@ pub async fn initialize_app_state() -> Result<AppState> {
         merkle_states: Arc::new(DashMap::new()),
         db_pool: pool,
         metrics: Arc::new(crate::service::metrics::Metrics::new()),
+        http_metrics: Arc::new(crate::service::metrics::HttpMetrics::new()),
         processor_state: Arc::new(std::sync::atomic::AtomicU8::new(0)), // 0 = Running
     };
 

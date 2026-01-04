@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::tree::LEAF_HASH_SIZE;
 
@@ -251,5 +253,167 @@ impl Metrics {
 impl Default for Metrics {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// HTTP Metrics (lock-free)
+// ============================================================================
+
+/// Latency bucket thresholds in milliseconds
+pub const LATENCY_BUCKETS: [u64; 5] = [1, 5, 10, 50, 100];
+
+/// Number of latency buckets (5 thresholds + 1 overflow bucket)
+pub const NUM_LATENCY_BUCKETS: usize = 6;
+
+/// Lock-free metrics for a single HTTP endpoint
+pub struct EndpointMetrics {
+    /// Total number of requests
+    pub requests: AtomicU64,
+    /// Number of requests that resulted in errors
+    pub errors: AtomicU64,
+    /// Latency buckets: <1ms, <5ms, <10ms, <50ms, <100ms, ≥100ms
+    pub latency_buckets: [AtomicU64; NUM_LATENCY_BUCKETS],
+}
+
+impl EndpointMetrics {
+    /// Creates a new `EndpointMetrics` instance with all counters at zero
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            requests: AtomicU64::new(0),
+            errors: AtomicU64::new(0),
+            latency_buckets: [
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+            ],
+        }
+    }
+
+    /// Record a successful request with the given latency
+    ///
+    /// # Panics
+    /// - Infallible: 0 <= bucket < `NUM_LATENCY_BUCKETS`
+    pub fn record_success(&self, latency: Duration) {
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        let bucket = Self::latency_bucket(latency);
+        let value = self.latency_buckets.get(bucket).expect("0 <= bucket < NUM_LATENCY_BUCKETS");
+        value.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a failed request with the given latency
+    /// 
+    /// # Panics
+    /// - Infallible: 0 <= bucket < `NUM_LATENCY_BUCKETS`
+    pub fn record_error(&self, latency: Duration) {
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.errors.fetch_add(1, Ordering::Relaxed);
+        let bucket = Self::latency_bucket(latency);
+        let value = self.latency_buckets.get(bucket).expect("0 <= bucket < NUM_LATENCY_BUCKETS");
+        value.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Determine which latency bucket a duration falls into
+    /// Returns index 0-5 for buckets: <1ms, <5ms, <10ms, <50ms, <100ms, ≥100ms
+    fn latency_bucket(latency: Duration) -> usize {
+        let ms = u64_millis(latency.as_millis());
+        for (i, &threshold) in LATENCY_BUCKETS.iter().enumerate() {
+            if ms < threshold {
+                return i;
+            }
+        }
+        NUM_LATENCY_BUCKETS - 1 // ≥100ms bucket
+    }
+
+    /// Get a snapshot of current metrics
+    #[must_use]
+    pub fn snapshot(&self) -> EndpointMetricsSnapshot {
+        EndpointMetricsSnapshot {
+            requests: self.requests.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+            latency_buckets: [
+                self.latency_buckets[0].load(Ordering::Relaxed),
+                self.latency_buckets[1].load(Ordering::Relaxed),
+                self.latency_buckets[2].load(Ordering::Relaxed),
+                self.latency_buckets[3].load(Ordering::Relaxed),
+                self.latency_buckets[4].load(Ordering::Relaxed),
+                self.latency_buckets[5].load(Ordering::Relaxed),
+            ],
+        }
+    }
+}
+
+impl Default for EndpointMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Snapshot of endpoint metrics (non-atomic, for serialization)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EndpointMetricsSnapshot {
+    /// Total number of requests
+    pub requests: u64,
+    /// Number of requests that resulted in errors
+    pub errors: u64,
+    /// Latency bucket counts: <1ms, <5ms, <10ms, <50ms, <100ms, ≥100ms
+    pub latency_buckets: [u64; NUM_LATENCY_BUCKETS],
+}
+
+/// Lock-free HTTP metrics container for proof endpoints
+pub struct HttpMetrics {
+    /// Metrics for inclusion proof endpoint
+    pub inclusion: EndpointMetrics,
+    /// Metrics for consistency proof endpoint
+    pub consistency: EndpointMetrics,
+}
+
+impl HttpMetrics {
+    /// Creates a new `HttpMetrics` instance
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            inclusion: EndpointMetrics::new(),
+            consistency: EndpointMetrics::new(),
+        }
+    }
+
+    /// Get a snapshot of all HTTP metrics
+    #[must_use]
+    pub fn snapshot(&self) -> HttpMetricsSnapshot {
+        HttpMetricsSnapshot {
+            inclusion: self.inclusion.snapshot(),
+            consistency: self.consistency.snapshot(),
+        }
+    }
+}
+
+impl Default for HttpMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Snapshot of all HTTP metrics (for serialization)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HttpMetricsSnapshot {
+    /// Metrics for inclusion proof endpoint
+    pub inclusion: EndpointMetricsSnapshot,
+    /// Metrics for consistency proof endpoint
+    pub consistency: EndpointMetricsSnapshot,
+}
+
+/// Safely converts u128 milliseconds to u64, capping at `u64::MAX`
+/// 
+/// This is used for timing metrics where u64 is expected.
+pub(crate) fn u64_millis(millis: u128) -> u64 {
+    if millis > u128::from(u64::MAX) {
+        u64::MAX
+    } else {
+        u64::try_from(millis).expect("millis <= u64::MAX")
     }
 }

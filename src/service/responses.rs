@@ -7,6 +7,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::service::metrics::HttpMetricsSnapshot;
 use crate::{ConsistencyProof, InclusionProof};
 
 /// Unified API response wrapper
@@ -225,4 +226,7 @@ pub struct MetricsResponse {
     pub logs: HashMap<String, LogMetricsResponse>,
     /// Global processing metrics
     pub global: GlobalMetricsResponse,
+    /// HTTP endpoint metrics (optional for backwards compatibility)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http: Option<HttpMetricsSnapshot>,
 }

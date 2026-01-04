@@ -16,8 +16,6 @@ pub enum ProofError {
     LeafNotPresentAtTree,
     /// The old root must have a smaller tree size than the current root
     InvalidRootOrder,
-    /// Cannot generate consistency proof from a root to itself
-    SameRoot,
     /// The tree rewind operation failed
     RewindError(RewindError),
     /// The requested size is too large to fit into a usize
@@ -262,16 +260,17 @@ impl CtMerkleTree {
 
     /// Generates a consistency proof between any two historical roots
     ///
+    /// If both roots are identical, returns an empty proof (trivially valid).
+    ///
     /// # Errors
     ///
     /// - `ProofError::RootNotFound`: if either root does not exist in the tree's history,
-    /// - `ProofError::SameRoot`: if both roots are identical,
-    /// - `ProofError::InvalidRootOrder`: if the old root is from a tree that is not strictly smaller than the new root's tree.
+    /// - `ProofError::InvalidRootOrder`: if the old root is from a tree that is larger than the new root's tree.
     /// - `ProofError::RewindError`: if rewinding to `new_root` fails
     /// 
     /// # Panics
     /// 
-    /// Infallible: `new_size` > `old_size`
+    /// Infallible: `new_size` >= `old_size`
     pub fn prove_consistency_between(
         &self,
         old_root: &[u8],
@@ -287,18 +286,13 @@ impl CtMerkleTree {
             .get(new_root)
             .ok_or(ProofError::RootNotFound)?;
 
-        // Check for same root
-        if old_root == new_root {
-            return Err(ProofError::SameRoot);
-        }
-
-        // New root must be from a larger tree
-        if new_size <= old_size {
+        // New root must be from an equal or larger tree
+        if new_size < old_size {
             return Err(ProofError::InvalidRootOrder);
         }
 
         // Calculate number of additions
-        let num_additions: u64 = new_size.checked_sub(old_size).expect("new_size > old_size by above if");
+        let num_additions: u64 = new_size.checked_sub(old_size).expect("new_size >= old_size by above check");
 
         // Get tree state at new_root
         let new_tree = if new_root == self.root() {
@@ -532,14 +526,18 @@ mod tests {
         // Get current root
         let current_root = tree.root();
 
-        // Try to generate a proof using current root (this should fail)
-        let result = tree.prove_consistency(&current_root);
-
-        // Should get SameRoot error
+        // Generating a consistency proof for the same root should succeed with an empty proof
+        let proof = tree.prove_consistency(&current_root).expect("Same root should return valid proof");
+        
+        // Proof should be empty (trivially valid)
         assert!(
-            matches!(result, Err(ProofError::SameRoot)),
-            "Proving consistency with current root should return SameRoot error"
+            proof.as_bytes().is_empty(),
+            "Same root consistency proof should have empty path"
         );
+
+        // Proof should verify successfully
+        tree.verify_consistency(&current_root, &proof)
+            .expect("Same root consistency proof should verify");
     }
 
     #[test]
@@ -723,11 +721,16 @@ mod tests {
             Err(ProofError::InvalidRootOrder)
         ));
 
-        // Same root
-        assert!(matches!(
-            tree.prove_consistency_between(&root1, &root1),
-            Err(ProofError::SameRoot)
-        ));
+        // Same root should succeed with empty proof
+        let same_root_proof = tree.prove_consistency_between(&root1, &root1)
+            .expect("Same root should succeed");
+        assert!(
+            same_root_proof.as_bytes().is_empty(),
+            "Same root consistency proof should have empty path"
+        );
+        // And verify successfully
+        tree.verify_consistency_between(&root1, &root1, &same_root_proof)
+            .expect("Same root consistency proof should verify");
 
         // Non-existent root
         let fake_root = vec![9; 32];

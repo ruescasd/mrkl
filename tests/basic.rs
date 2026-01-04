@@ -72,7 +72,7 @@ async fn test_inclusion_proofs() -> Result<()> {
     }
 
     // Get the current root
-    let root = client.client.get_root("test_log_single_source").await?;
+    let root = client.client.get_root("test_log_single_source").await?.root;
 
     // Verify inclusion proofs for all entries using their hashes
     for (entry, hash) in entries.iter().zip(hashes.iter()) {
@@ -113,7 +113,7 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
     // Get initial state
     let initial_size = client.client.get_log_size("test_log_single_source").await?;
     let initial_root = if initial_size > 0 {
-        Some(client.client.get_root("test_log_single_source").await?)
+        Some(client.client.get_root("test_log_single_source").await?.root)
     } else {
         None
     };
@@ -170,7 +170,7 @@ async fn test_has_leaf_and_has_root() -> Result<()> {
     }
 
     // Test has_root - check current root
-    let current_root = client.client.get_root("test_log_single_source").await?;
+    let current_root = client.client.get_root("test_log_single_source").await?.root;
     let has_current_root = client
         .client
         .has_root("test_log_single_source", current_root)
@@ -260,7 +260,7 @@ async fn test_consistency_proofs() -> Result<()> {
                 .await?;
 
             // Store root after each entry
-            let root = client.client.get_root("test_log_single_source").await?;
+            let root = client.client.get_root("test_log_single_source").await?.root;
             println!(
                 "📸 Storing intermediate root after entry {}-{}",
                 i + 1,
@@ -283,7 +283,7 @@ async fn test_consistency_proofs() -> Result<()> {
         .await?;
 
     // Get final tree state
-    let final_root = client.client.get_root("test_log_single_source").await?;
+    let final_root = client.client.get_root("test_log_single_source").await?.root;
 
     // Verify consistency between each historical root and final state
     for (i, historical_root) in historical_roots.iter().enumerate() {
@@ -300,15 +300,23 @@ async fn test_consistency_proofs() -> Result<()> {
         );
     }
 
-    println!("🔍 Consistency of root with itself should fail");
+    // Test consistency of root with itself - should return valid empty proof
+    println!("🔍 Testing consistency of root with itself (should succeed with empty proof)");
+    let same_root_proof = client
+        .client
+        .get_consistency_proof("test_log_single_source", final_root.clone())
+        .await?;
+    
+    // Proof should be empty (trivially valid)
     assert!(
-        client
-            .client
-            .verify_tree_consistency("test_log_single_source", final_root)
-            .await
-            .is_err(),
-        "Consistency of root with itself should fail"
+        same_root_proof.proof_bytes.is_empty(),
+        "Same root consistency proof should have empty proof_bytes"
     );
+    
+    // Proof should verify successfully
+    same_root_proof.verify(&final_root)
+        .expect("Same root consistency proof should verify");
+    println!("   ✓ Same root returns empty proof that verifies");
 
     Ok(())
 }
@@ -350,7 +358,7 @@ async fn test_burst_operations() -> Result<()> {
         .await?;
 
     // Get final root
-    let root = client.client.get_root("test_log_single_source").await?;
+    let root = client.client.get_root("test_log_single_source").await?.root;
     println!(
         "🌳 Final merkle root after burst: {}",
         base64::engine::general_purpose::STANDARD.encode(&root)
@@ -439,7 +447,7 @@ async fn test_large_batch_performance() -> Result<()> {
         .await?;
 
     // Get and verify final root
-    let root = client.client.get_root("test_log_single_source").await?;
+    let root = client.client.get_root("test_log_single_source").await?.root;
 
     println!(
         "Final root: {}",

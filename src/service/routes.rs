@@ -143,11 +143,14 @@ pub async fn get_inclusion_proof(
     query_result: Result<Query<InclusionQuery>, axum::extract::rejection::QueryRejection>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+
     // Handle query parameter parsing errors
     let Query(query) = match query_result {
         Ok(query) => query,
         Err(e) => {
             tracing::debug!(error = %e, "Invalid proof request");
+            state.http_metrics.inclusion.record_error(start.elapsed());
             return ApiError::InvalidRequest(format!(
                 "Invalid request parameters: {e}. The hash parameter must be base64 encoded."
             ))
@@ -156,12 +159,11 @@ pub async fn get_inclusion_proof(
     };
 
     // Get the merkle state for this log
-    let merkle_state_arc = match state.merkle_states.get(&log_name) {
-        Some(arc) => arc.clone(),
-        None => {
-            return ApiError::LogNotFound(log_name).to_response();
-        }
+    let Some(merkle_state_arc) = state.merkle_states.get(&log_name) else {
+        state.http_metrics.inclusion.record_error(start.elapsed());
+        return ApiError::LogNotFound(log_name).to_response();
     };
+    let merkle_state_arc = merkle_state_arc.clone();
 
     let merkle_state = merkle_state_arc.read();
 
@@ -170,6 +172,7 @@ pub async fn get_inclusion_proof(
     let proof = match tree.prove_inclusion(&query.hash) {
         Ok(proof) => proof,
         Err(e) => {
+            state.http_metrics.inclusion.record_error(start.elapsed());
             return ApiError::ProofGenerationFailed(format!(
                 "Failed to generate inclusion proof: {e:?}"
             ))
@@ -193,13 +196,17 @@ pub async fn get_inclusion_proof(
                 tree_size: tree.len(),
             };
 
+            state.http_metrics.inclusion.record_success(start.elapsed());
             ApiResponse::success(InclusionProofResponse {
                 log_name,
                 proof: inclusion_proof,
             })
         }
-        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification error: {e:?}"))
-            .to_response(),
+        Err(e) => {
+            state.http_metrics.inclusion.record_error(start.elapsed());
+            ApiError::ProofVerificationFailed(format!("Proof verification error: {e:?}"))
+                .to_response()
+        }
     }
 }
 
@@ -230,11 +237,14 @@ pub async fn get_consistency_proof(
     query_result: Result<Query<ConsistencyQuery>, axum::extract::rejection::QueryRejection>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+
     // Handle query parameter parsing errors
     let Query(query) = match query_result {
         Ok(query) => query,
         Err(e) => {
             tracing::debug!(error = %e, "Invalid consistency proof request");
+            state.http_metrics.consistency.record_error(start.elapsed());
             return ApiError::InvalidRequest(format!(
                 "Invalid request parameters: {e}. The old_root parameter must be base64 encoded."
             ))
@@ -243,12 +253,11 @@ pub async fn get_consistency_proof(
     };
 
     // Get the merkle state for this log
-    let merkle_state_arc = match state.merkle_states.get(&log_name) {
-        Some(arc) => arc.clone(),
-        None => {
-            return ApiError::LogNotFound(log_name).to_response();
-        }
+    let Some(merkle_state_arc) = state.merkle_states.get(&log_name) else {
+        state.http_metrics.consistency.record_error(start.elapsed());
+        return ApiError::LogNotFound(log_name).to_response();
     };
+    let merkle_state_arc = merkle_state_arc.clone();
 
     let merkle_state = merkle_state_arc.read();
     let tree = &merkle_state.tree;
@@ -257,6 +266,7 @@ pub async fn get_consistency_proof(
     let proof = match tree.prove_consistency(&query.old_root) {
         Ok(proof) => proof,
         Err(e) => {
+            state.http_metrics.consistency.record_error(start.elapsed());
             return ApiError::ProofGenerationFailed(format!(
                 "Failed to generate consistency proof: ProofError: {e:?}"
             ))
@@ -279,13 +289,20 @@ pub async fn get_consistency_proof(
                 new_tree_size: tree.len(),
             };
 
+            state
+                .http_metrics
+                .consistency
+                .record_success(start.elapsed());
             ApiResponse::success(ConsistencyProofResponse {
                 log_name,
                 proof: consistency_proof,
             })
         }
-        Err(e) => ApiError::ProofVerificationFailed(format!("Proof verification failed: {e:?}"))
-            .to_response(),
+        Err(e) => {
+            state.http_metrics.consistency.record_error(start.elapsed());
+            ApiError::ProofVerificationFailed(format!("Proof verification failed: {e:?}"))
+                .to_response()
+        }
     }
 }
 
@@ -409,6 +426,7 @@ pub async fn has_log(
 /// Get current metrics for all logs and global statistics
 pub async fn metrics(State(app_state): State<AppState>) -> impl IntoResponse {
     let metrics = app_state.metrics.get_snapshot();
+    let http_metrics = app_state.http_metrics.snapshot();
 
     let mut logs = std::collections::HashMap::new();
     for (log_name, log_metrics) in metrics.0 {
@@ -436,7 +454,11 @@ pub async fn metrics(State(app_state): State<AppState>) -> impl IntoResponse {
         last_cycle_fraction: metrics.1.last_cycle_fraction,
     };
 
-    ApiResponse::success(MetricsResponse { logs, global })
+    ApiResponse::success(MetricsResponse {
+        logs,
+        global,
+        http: Some(http_metrics),
+    })
 }
 // Admin endpoints for processor control
 // These endpoints allow graceful pause/resume/stop of the batch processor

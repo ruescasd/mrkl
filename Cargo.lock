@@ -2028,6 +2028,7 @@ dependencies = [
  "digest",
  "dotenv",
  "parking_lot",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",
