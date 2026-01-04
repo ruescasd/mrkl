@@ -63,7 +63,13 @@
     - [ ] Minimize PostgreSQL lock contention on source tables (documentation task for external applications)
     - [ ] Parallelize batch processor per-log
     - [ ] Investigate occasional merkle tree update compute time spike: Occasionally the merkle tree update time spikes to 2-4x its previous
-    values, for approximately 10-20 cycles, before returning to the baseline.
+    values, for approximately 10-20 cycles, before returning to the baseline. Investigating
+    the reallocation as the root problem could lead to
+      - [ ] Preallocate CtMerkleTree hashmaps (there's two) with a given capacity
+      - [ ] Use jemalloc as the allocator. This could also help in measuring memory usage which
+      is currently only approximated for trees (with LogMetrics::tree_size_bytes)
+      - [ ] If forking ct-merkle, we could also preallocate its two internal vectors; an additional positive side effect of this would be that we could potentially eliminate the "double hashing" problem item above.
+    Note also, regarding initializing with capacities, staggered capacities is a valid technique to smooth out the worst-case latency, as reallocations would occur at different times.
 
 **Documentation**:
 - [X] REMOVED, sufficiently covered by Tutorial: Deployment guide (environment variables, database setup)

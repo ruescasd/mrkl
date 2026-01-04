@@ -217,7 +217,7 @@ let client = Client::new("http://localhost:3000")?;
 // We assume this has been entered into a source table and merged into the log
 let hash = b"my hash";
 
-// Get inclusion proof for some data
+// Get inclusion proof
 let proof = client.get_inclusion_proof("my_log", hash).await?;
 
 proof.verify(&hash)?;
@@ -610,6 +610,17 @@ cargo run --bin load --release -- --rows-per-interval 1000 --num-sources 3
       load_test_1             11998       82       59       56        4.7        2       18       0.07         5.1M      1.0GB
       load_test_2             11998       79       56       53        4.4        4       18       0.07         5.1M      1.0GB
 
+`cargo run --bin load --release -- --num-sources 3 --rows-per-interval 20000`, ~10M entries
+
+      Mode: AVERAGE | Press 'a' for average, 'l' for last
+
+      Cycle: 811ms (0.77x) | Active Logs: 3
+
+      LOG                      ROWS    TOTAL     COPY   INSERT   (µs/row)    FETCH     TREE  TREE/WORK         SIZE     MEMORY       UPDATE
+      ------------------------------------------------------------------------------------------------------------------------------------------------
+      load_test_0             35963      272      192      189        5.3       13       65       0.08        10.2M      2.0GB     00:17:08
+      load_test_1             35329      261      182      178        5.0       14       63       0.08        10.2M      2.0GB     00:17:08
+      load_test_2             35196      262      182      178        5.1       13       65       0.08        10.2M      2.0GB     00:17:08
 
 ##### Hardware 2
 
