@@ -74,8 +74,10 @@ async fn ensure_merkle_log_table_exists(conn: &PooledConnection, log_name: &str)
     let table_name = merkle_log_table_name(log_name);
     
     // Use IF NOT EXISTS to make this idempotent
+    // SET client_min_messages suppresses the NOTICE when table already exists
     let create_table = format!(
         r"
+        SET client_min_messages = warning;
         CREATE TABLE IF NOT EXISTS {table_name} (
             id BIGSERIAL PRIMARY KEY,
             source_table TEXT NOT NULL,
@@ -83,7 +85,8 @@ async fn ensure_merkle_log_table_exists(conn: &PooledConnection, log_name: &str)
             leaf_hash BYTEA NOT NULL,
             processed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (source_table, source_id)
-        )
+        );
+        SET client_min_messages = notice;
         "
     );
     
@@ -339,6 +342,7 @@ async fn process_log(app_state: &AppState, log_name: &str, batch_size: u32) -> R
 
         // Update metrics for this log
         let final_tree_size = merkle_state.tree.len();
+
         // Release lock asap
         drop(merkle_state);
 

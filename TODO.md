@@ -62,9 +62,7 @@
           - Could use read, clone, update and then write, to perform the tree updates outsiude of the lock
     - [ ] Minimize PostgreSQL lock contention on source tables (documentation task for external applications)
     - [ ] Parallelize batch processor per-log
-    - [ ] Investigate occasional merkle tree update compute time spike: Occasionally the merkle tree update time spikes to 2-4x its previous
-    values, for approximately 10-20 cycles, before returning to the baseline. Investigating
-    the reallocation as the root problem could lead to
+    - [ ]  Occasionally the merkle tree update time spikes to 2-4x its previous values, for approximately 10-20 cycles, before returning to the baseline. UPDATE: this has been confirmed to be caused by reallocation [2]
       - [ ] Preallocate CtMerkleTree hashmaps (there's two) with a given capacity
       - [ ] Use jemalloc as the allocator. This could also help in measuring memory usage which
       is currently only approximated for trees (with LogMetrics::tree_size_bytes)
@@ -234,3 +232,48 @@ Then calls tree.verify_consistency(&query.old_root, &proof)
 Which delegates to verify_consistency_between(old_root, &self.root(), proof) ← passes CURRENT root as new_root
 In verify_consistency_between (line 257-259): checks if new_root == self.root() → takes first branch &self.tree, skips rewind
 Key insight: The HTTP handlers only use the public API methods (prove_inclusion, verify_inclusion, prove_consistency, verify_consistency) which always use the current root for the "new" or "target" tree. The rewind function is only called when checking against historical roots, but the HTTP endpoints never pass historical roots as the verification target.
+
+[2]
+
+2026-01-04T12:59:04.032391Z  WARN trellis::service::processor: Tree update spike detected (threshold: 0.2) log_name="load_test_1" tree_size=459954 leaves_added=19998 tree_ms="116.93" normalized="0.31"
+2026-01-04T12:59:04.249591Z  WARN trellis::service::processor: Tree update spike detected (threshold: 0.2) log_name="load_test_2" tree_size=459954 leaves_added=19998 tree_ms="118.91" normalized="0.32"
+2026-01-04T12:59:05.476890Z  WARN trellis::service::processor: Tree update spike detected (threshold: 0.2) log_name="load_test_0" tree_size=469953 leaves_added=19998 tree_ms="117.48" normalized="0.31"
+2026-01-04T12:59:50.831264Z  WARN trellis::service::processor: Tree update spike detected (threshold: 0.2) log_name="load_test_0" tree_size=919908 leaves_added=9999 tree_ms="216.70" normalized="1.09"
+2026-01-04T12:59:51.089273Z  WARN trellis::service::processor: Tree update spike detected (threshold: 0.2) log_name="load_test_1" tree_size=919908 leaves_added=9999 tree_ms="214.89" normalized="1.08"
+2026-01-04T12:59:51.352406Z  WARN trellis::service::processor: Tree update spike detected (threshold: 0.2) log_name="load_test_2" tree_size=919908 leaves_added=9999 tree_ms="219.23" normalized="1.11"
+2026-01-04T13:01:23.877836Z  WARN trellis::service::processor: Tree update spike detected (threshold: 0.2) log_name="load_test_0" tree_size=1839816 leaves_added=9999 tree_ms="431.69" normalized="2.07"
+2026-01-04T13:01:24.373380Z  WARN trellis::service::processor: Tree update spike detected (threshold: 0.2) log_name="load_test_1" tree_size=1839816 leaves_added=9999 tree_ms="437.35" normalized="2.10"
+2026-01-04T13:01:24.908695Z  WARN trellis::service::processor: Tree update spike detected (threshold: 0.2) log_name="load_test_2" tree_size=1849815 leaves_added=19998 tree_ms="440.38" normalized="1.06"
+
+Doubling pattern: 460K → 920K → 1.84M — each spike is at roughly 2× the previous tree size
+
+Increasing cost: The reallocation time scales with tree size (116ms → 217ms → 435ms), which matches O(n) copy behavior
+
+Consistent across logs: All three logs spike at the same tree sizes, confirming it's the data structure, not random variance
+
+Not exact powers of 2: The sizes (460K, 920K, 1.84M) suggest the underlying Vec started with non-power-of-2 capacity or there's some offset from the HashMap thresholds overlapping
+
+This code was used to produce the traces:
+
+// Update metrics for this log <---- existing code marker  
+let final_tree_size = merkle_state.tree.len();
+
+// Trace code
+// Detect tree update spikes (likely caused by reallocation)
+// Formula: tree_ms / (rows * log2(tree_size)) = µs per (row × tree level)
+if leaves_added > 0 && final_tree_size > 1 {
+    let tree_ms = tree_duration.as_secs_f64() * 1000.0;
+    let log2_size = (final_tree_size as f64).log2();
+    let normalized = (tree_ms * 1000.0) / (leaves_added as f64 * log2_size);
+    const SPIKE_THRESHOLD: f64 = 0.2; // µs per (row × level), adjust as needed
+    if normalized > SPIKE_THRESHOLD {
+        tracing::warn!(
+            log_name,
+            tree_size = final_tree_size,
+            leaves_added,
+            tree_ms = format!("{:.2}", tree_ms),
+            normalized = format!("{:.2}", normalized),
+            "Tree update spike detected (threshold: {SPIKE_THRESHOLD})"
+        );
+    }
+}
