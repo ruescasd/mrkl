@@ -473,11 +473,10 @@ async fn http_load_task(
 
 /// Process pending leaves: check has_leaf, request and verify inclusion proofs
 async fn process_pending_leaves(client: &Client, state: &Arc<Mutex<HttpLoadState>>) {
-    // Take pending leaves to process (limit batch size to avoid holding lock too long)
+    // Take all pending leaves to process
     let to_process: Vec<PendingLeaf> = {
         let mut state = state.lock().await;
-        let count = state.pending.len().min(50); // Process up to 50 per cycle
-        state.pending.drain(..count).collect()
+        state.pending.drain(..).collect()
     };
 
     let mut still_pending = Vec::new();
