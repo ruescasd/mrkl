@@ -547,14 +547,32 @@ endpoint performance benefits from:
 
 #### Load Testing
 
-The `load` binary simulates heavy workloads using direct database inserts to
-create entries. Together with the `dashboard` binary this can be used to measure
-performance under load.
+The `load` binary simulates heavy workloads for both the batch processor and HTTP API.
+
+**Batch processor load**: Direct database inserts create entries that the batch processor must copy and incorporate into merkle trees.
 
 ```bash
 # Insert 1000 entries per cycle, spread across 3 sources per log
 cargo run --bin load --release -- --rows-per-interval 1000 --num-sources 3
 ```
+
+**HTTP API load** (`--http-load`): Samples inserted entries and verifies them via HTTP endpoints:
+- **Inclusion proofs**: Polls `has_leaf`, then requests and verifies inclusion proofs for sampled entries
+- **Consistency proofs**: Maintains a ring buffer of historical roots and verifies consistency proofs against ~10% of stored roots each cycle
+
+```bash
+# Combined batch + HTTP load testing
+cargo run --bin load --release -- --rows-per-interval 1000 --http-load --sample-rate 0.01
+```
+
+Key HTTP load parameters:
+- `--http-load`: Enable HTTP endpoint testing
+- `--sample-rate`: Fraction of inserted leaves to verify (default: 0.01 = 1%)
+- `--max-roots`: Historical roots to retain per log for consistency proofs (default: 100)
+- `--max-concurrent`: Concurrent HTTP request limit (default: 50)
+- `--http-interval-ms`: Interval between HTTP test cycles (default: 500ms)
+
+Together with the `dashboard` binary, this can be used to measure performance under load.
 
 #### Typical performance numbers
 

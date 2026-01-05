@@ -34,6 +34,13 @@
 //! only be tested against roots within roughly `max_roots × http_interval_ms` of
 //! history (default: ~50 seconds). Older roots are not retained.
 //!
+//! ## Concurrency Limit
+//!
+//! HTTP requests are processed with bounded concurrency controlled by `--max-concurrent`
+//! (default 50). Without this limit, processing thousands of pending leaves simultaneously
+//! can exhaust local TCP sockets (OS error 10055 on Windows). Tune this based on your
+//! system's capacity and the target server's ability to handle concurrent connections.
+//!
 #![allow(clippy::pedantic)]
 #![allow(clippy::print_stdout)]
 #![allow(clippy::print_stderr)]
@@ -42,6 +49,7 @@
 use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
+use futures::stream::{self, StreamExt};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
@@ -60,9 +68,9 @@ struct Args {
     #[arg(short, long, default_value_t = 100)]
     rows_per_interval: u32,
 
-    /// Interval between batches in seconds
-    #[arg(short, long, default_value_t = 1)]
-    interval_secs: u64,
+    /// Interval between batches in milliseconds
+    #[arg(short, long, default_value_t = 500)]
+    interval_ms: u64,
 
     /// Number of logs to create and populate
     #[arg(short, long, default_value_t = 3)]
@@ -87,6 +95,10 @@ struct Args {
     /// Interval between HTTP load cycles in milliseconds
     #[arg(long, default_value_t = 500)]
     http_interval_ms: u64,
+
+    /// Maximum concurrent HTTP requests for proof verification
+    #[arg(long, default_value_t = 50)]
+    max_concurrent: usize,
 }
 
 /// A leaf waiting to be verified via HTTP
@@ -159,15 +171,23 @@ impl HttpLoadState {
         roots.push_back((root, tree_size));
     }
 
-    /// Get a random historical root for consistency proof testing
-    fn get_random_old_root(&self, log_name: &str) -> Option<(Vec<u8>, u64)> {
-        let roots = self.roots.get(log_name)?;
+    /// Sample ~10% of historical roots for consistency proof testing (excludes latest)
+    fn sample_old_roots(&self, log_name: &str) -> Vec<(Vec<u8>, u64)> {
+        let Some(roots) = self.roots.get(log_name) else {
+            return Vec::new();
+        };
         if roots.len() < 2 {
-            return None; // Need at least 2 roots to pick an old one
+            return Vec::new(); // Need at least 2 roots to pick old ones
         }
-        // Pick a random root that's not the latest
-        let idx = rand::rng().random_range(0..roots.len() - 1);
-        roots.get(idx).cloned()
+
+        // Sample ~10% of roots (excluding the latest)
+        let old_roots = roots.len() - 1;
+        roots
+            .iter()
+            .take(old_roots)
+            .filter(|_| rand::rng().random::<f64>() < 0.1)
+            .cloned()
+            .collect()
     }
 }
 
@@ -184,7 +204,7 @@ async fn main() -> Result<()> {
 
     println!("=== Trellis Load Generator ===");
     println!("Rows per interval: {}", args.rows_per_interval);
-    println!("Interval: {}s", args.interval_secs);
+    println!("Interval: {}ms", args.interval_ms);
     println!("Number of logs: {}", args.num_logs);
     println!("Sources per log: {}", args.num_sources);
     if args.http_load {
@@ -214,6 +234,12 @@ async fn main() -> Result<()> {
         None
     };
 
+    // Unique run identifier to ensure fresh data each run
+    let run_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time went backwards")
+        .as_millis();
+
     // Spawn HTTP load task if enabled
     if let Some(state) = http_state.clone() {
         let http_client = Client::new(&server_url)?;
@@ -221,16 +247,17 @@ async fn main() -> Result<()> {
         let log_names: Vec<String> = (0..args.num_logs)
             .map(|i| format!("load_test_{i}"))
             .collect();
+        let max_concurrent = args.max_concurrent;
 
         tokio::spawn(async move {
-            http_load_task(http_client, state, http_interval, log_names).await;
+            http_load_task(http_client, state, http_interval, log_names, max_concurrent).await;
         });
     }
 
     println!("📊 Starting load generation (Ctrl+C to stop)...\n");
 
     let mut counter = 0u64;
-    let interval = Duration::from_secs(args.interval_secs);
+    let interval = Duration::from_millis(args.interval_ms);
 
     loop {
         let start = std::time::Instant::now();
@@ -247,7 +274,7 @@ async fn main() -> Result<()> {
                 let rows_per_source = args.rows_per_interval / args.num_sources as u32;
 
                 let (inserted, sampled_hashes) =
-                    insert_rows(&client, &source_table, rows_per_source, &mut counter, args.sample_rate).await?;
+                    insert_rows(&client, &source_table, rows_per_source, &mut counter, args.sample_rate, run_id).await?;
 
                 total_inserted += inserted;
 
@@ -368,6 +395,7 @@ async fn insert_rows(
     count: u32,
     counter: &mut u64,
     sample_rate: f64,
+    run_id: u128,
 ) -> Result<(u32, Vec<Vec<u8>>)> {
     if count == 0 {
         return Ok((0, Vec::new()));
@@ -396,7 +424,7 @@ async fn insert_rows(
         
         for i in 0..batch_size {
             *counter += 1;
-            let data = format!("entry_{counter}");
+            let data = format!("entry_{run_id}_{counter}");
             let hash = compute_hash(&data);
             let timestamp = Utc::now();
             
@@ -456,85 +484,158 @@ async fn http_load_task(
     state: Arc<Mutex<HttpLoadState>>,
     interval: Duration,
     log_names: Vec<String>,
+    max_concurrent: usize,
 ) {
     loop {
+
+        let now = Instant::now();
         // Process pending leaves (check has_leaf, request proofs)
-        process_pending_leaves(&client, &state).await;
+        process_pending_leaves(&client, &state, max_concurrent).await;
 
         // Sample roots for consistency proof testing
         sample_roots(&client, &state, &log_names).await;
 
         // Test consistency proofs
-        test_consistency_proofs(&client, &state, &log_names).await;
+        test_consistency_proofs(&client, &state, &log_names, max_concurrent).await;
 
-        tokio::time::sleep(interval).await;
+        let elapsed = now.elapsed();
+
+
+        if elapsed < interval {
+            tokio::time::sleep(interval - elapsed).await;
+        }
+        /*else {
+            println!("🕸️ HTTP load cycle complete in {elapsed:?}");
+        }*/
     }
 }
 
 /// Process pending leaves: check has_leaf, request and verify inclusion proofs
-async fn process_pending_leaves(client: &Client, state: &Arc<Mutex<HttpLoadState>>) {
+/// Result of processing a single pending leaf
+struct LeafProcessResult {
+    /// If Some, the leaf should be retried (not yet in tree)
+    retry: Option<PendingLeaf>,
+    /// Number of has_leaf requests made
+    has_leaf_requests: u64,
+    /// Number of inclusion proofs verified
+    inclusion_proofs_verified: u64,
+    /// Total latency in ms for verified proofs
+    latency_ms: u64,
+    /// Number of errors encountered
+    errors: u64,
+    /// Error message to print, if any
+    error_message: Option<String>,
+}
+
+/// Process a single pending leaf - check existence and verify inclusion proof
+async fn process_single_leaf(client: &Client, leaf: PendingLeaf) -> LeafProcessResult {
+    let mut result = LeafProcessResult {
+        retry: None,
+        has_leaf_requests: 1, // Always make at least one has_leaf request
+        inclusion_proofs_verified: 0,
+        latency_ms: 0,
+        errors: 0,
+        error_message: None,
+    };
+
+    // Check if leaf exists yet
+    match client.has_leaf_hash(&leaf.log_name, &leaf.hash).await {
+        Ok(exists) => {
+            if !exists {
+                // Not yet processed, put back in queue
+                result.retry = Some(leaf);
+                return result;
+            }
+
+            // Leaf exists, request and verify inclusion proof
+            match client.get_inclusion_proof(&leaf.log_name, &leaf.hash).await {
+                Ok(proof) => {
+                    // Verify the proof
+                    match client.verify_inclusion_proof(&leaf.hash, &proof) {
+                        Ok(()) => {
+                            result.inclusion_proofs_verified = 1;
+                            result.latency_ms = leaf.insert_time.elapsed().as_millis() as u64;
+                        }
+                        Err(e) => {
+                            result.errors = 1;
+                            result.error_message = Some(format!(
+                                "❌ Inclusion proof verification failed for log {}: {e}",
+                                leaf.log_name
+                            ));
+                        }
+                    }
+                }
+                Err(e) => {
+                    result.errors = 1;
+                    result.error_message = Some(format!("❌ Failed to get inclusion proof: {e}"));
+                }
+            }
+        }
+        Err(e) => {
+            result.errors = 1;
+            result.error_message = Some(format!("❌ has_leaf request failed: {e}"));
+        }
+    }
+
+    result
+}
+
+/// Process pending leaves by verifying their inclusion proofs (concurrent with limit)
+async fn process_pending_leaves(
+    client: &Client,
+    state: &Arc<Mutex<HttpLoadState>>,
+    max_concurrent: usize,
+) {
     // Take all pending leaves to process
     let to_process: Vec<PendingLeaf> = {
         let mut state = state.lock().await;
         state.pending.drain(..).collect()
     };
 
-    let mut still_pending = Vec::new();
+    if to_process.is_empty() {
+        return;
+    }
 
-    for leaf in to_process {
-        // Increment has_leaf request counter
-        {
-            let mut state = state.lock().await;
-            state.stats.has_leaf_requests += 1;
+    // Process leaves with bounded concurrency
+    let results: Vec<LeafProcessResult> = stream::iter(to_process)
+        .map(|leaf| process_single_leaf(client, leaf))
+        .buffer_unordered(max_concurrent)
+        .collect()
+        .await;
+
+    // Aggregate results
+    let mut still_pending = Vec::new();
+    let mut total_has_leaf_requests: u64 = 0;
+    let mut total_inclusion_proofs_verified: u64 = 0;
+    let mut total_latency_ms: u64 = 0;
+    let mut total_errors: u64 = 0;
+
+    for result in results {
+        total_has_leaf_requests += result.has_leaf_requests;
+        total_inclusion_proofs_verified += result.inclusion_proofs_verified;
+        total_latency_ms += result.latency_ms;
+        total_errors += result.errors;
+
+        if let Some(leaf) = result.retry {
+            still_pending.push(leaf);
         }
 
-        // Check if leaf exists yet
-        match client.has_leaf_hash(&leaf.log_name, &leaf.hash).await {
-            Ok(exists) => {
-                if !exists {
-                    // Not yet processed, put back in queue
-                    still_pending.push(leaf);
-                    continue;
-                }
-
-                // Leaf exists, request and verify inclusion proof
-                match client.get_inclusion_proof(&leaf.log_name, &leaf.hash).await {
-                    Ok(proof) => {
-                        // Verify the proof
-                        match client.verify_inclusion_proof(&leaf.hash, &proof) {
-                            Ok(()) => {
-                                let latency_ms = leaf.insert_time.elapsed().as_millis() as u64;
-                                let mut state = state.lock().await;
-                                state.stats.inclusion_proofs_verified += 1;
-                                state.stats.total_latency_ms += latency_ms;
-                            }
-                            Err(e) => {
-                                let mut state = state.lock().await;
-                                state.stats.errors += 1;
-                                eprintln!("❌ Inclusion proof verification failed for log {}: {e}", leaf.log_name);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let mut state = state.lock().await;
-                        state.stats.errors += 1;
-                        eprintln!("❌ Failed to get inclusion proof: {e}");
-                    }
-                }
-            }
-            Err(e) => {
-                let mut state = state.lock().await;
-                state.stats.errors += 1;
-                eprintln!("❌ has_leaf request failed: {e}");
-            }
+        if let Some(msg) = result.error_message {
+            eprintln!("{msg}");
         }
     }
 
-    // Put still-pending leaves back
-    if !still_pending.is_empty() {
+    // Update state with aggregated stats
+    {
         let mut state = state.lock().await;
-        for leaf in still_pending {
-            state.pending.push_front(leaf); // Put at front to retry sooner
+        state.stats.has_leaf_requests += total_has_leaf_requests;
+        state.stats.inclusion_proofs_verified += total_inclusion_proofs_verified;
+        state.stats.total_latency_ms += total_latency_ms;
+        state.stats.errors += total_errors;
+
+        // Put still-pending leaves back at front
+        for leaf in still_pending.into_iter().rev() {
+            state.pending.push_front(leaf);
         }
     }
 }
@@ -547,51 +648,98 @@ async fn sample_roots(client: &Client, state: &Arc<Mutex<HttpLoadState>>, log_na
                 let mut state = state.lock().await;
                 state.add_root(log_name, root_response.root, root_response.tree_size);
             }
-            Err(_) => {
-                // Ignore errors - tree might be empty
+            Err(e) => {
+                println!("⚠️ Failed to get root for log {}: {}", log_name, e);
             }
         }
     }
 }
 
-/// Test consistency proofs between historical roots and current state
+/// Result of processing a single consistency proof
+struct ConsistencyProofResult {
+    /// Whether the proof was verified successfully
+    verified: bool,
+    /// Error message to print, if any
+    error_message: Option<String>,
+}
+
+/// Test a single consistency proof
+async fn test_single_consistency_proof(
+    client: &Client,
+    log_name: String,
+    old_root_hash: Vec<u8>,
+) -> ConsistencyProofResult {
+    match client.get_consistency_proof(&log_name, old_root_hash.clone()).await {
+        Ok(proof) => match client.verify_consistency_proof(&old_root_hash, &proof) {
+            Ok(()) => ConsistencyProofResult {
+                verified: true,
+                error_message: None,
+            },
+            Err(e) => ConsistencyProofResult {
+                verified: false,
+                error_message: Some(format!(
+                    "❌ Consistency proof verification failed for log {log_name}: {e}"
+                )),
+            },
+        },
+        Err(e) => ConsistencyProofResult {
+            verified: false,
+            error_message: Some(format!(
+                "❌ Failed to get consistency proof for log {log_name}: {e}"
+            )),
+        },
+    }
+}
+
+/// Test consistency proofs between historical roots and current state (concurrent)
 async fn test_consistency_proofs(
     client: &Client,
     state: &Arc<Mutex<HttpLoadState>>,
     log_names: &[String],
+    max_concurrent: usize,
 ) {
-    for log_name in log_names {
-        // Get a random old root for this log
-        let old_root = {
-            let state = state.lock().await;
-            state.get_random_old_root(log_name)
-        };
+    // Collect all roots to test across all logs
+    let roots_to_test: Vec<(String, Vec<u8>)> = {
+        let state = state.lock().await;
+        log_names
+            .iter()
+            .flat_map(|log_name| {
+                state
+                    .sample_old_roots(log_name)
+                    .into_iter()
+                    .map(|(root_hash, _size)| (log_name.clone(), root_hash))
+            })
+            .collect()
+    };
 
-        let Some((old_root_hash, _old_size)) = old_root else {
-            continue; // Not enough roots yet
-        };
+    if roots_to_test.is_empty() {
+        return;
+    }
 
-        // Request consistency proof
-        match client.get_consistency_proof(log_name, old_root_hash.clone()).await {
-            Ok(proof) => {
-                // Verify the proof
-                match client.verify_consistency_proof(&old_root_hash, &proof) {
-                    Ok(()) => {
-                        let mut state = state.lock().await;
-                        state.stats.consistency_proofs_verified += 1;
-                    }
-                    Err(e) => {
-                        let mut state = state.lock().await;
-                        state.stats.errors += 1;
-                        eprintln!("❌ Consistency proof verification failed for log {log_name}: {e}");
-                    }
-                }
-            }
-            Err(e) => {
-                let mut state = state.lock().await;
-                state.stats.errors += 1;
-                eprintln!("❌ Failed to get consistency proof for log {log_name}: {e}");
-            }
+    // Process all consistency proofs concurrently with bounded concurrency
+    let results: Vec<ConsistencyProofResult> = stream::iter(roots_to_test)
+        .map(|(log_name, root_hash)| test_single_consistency_proof(client, log_name, root_hash))
+        .buffer_unordered(max_concurrent)
+        .collect()
+        .await;
+
+    // Aggregate results
+    let mut total_verified: u64 = 0;
+    let mut total_errors: u64 = 0;
+
+    for result in results {
+        if result.verified {
+            total_verified += 1;
+        } else {
+            total_errors += 1;
+        }
+        if let Some(msg) = result.error_message {
+            eprintln!("{msg}");
         }
     }
+
+    // Update state
+    let mut state = state.lock().await;
+    state.stats.consistency_proofs_verified += total_verified;
+    state.stats.errors += total_errors;
 }

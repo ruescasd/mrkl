@@ -184,6 +184,8 @@ pub async fn run_batch_processor(app_state: AppState) {
     let batch_size: u32 = 30000;
     let interval = std::time::Duration::from_secs(1);
 
+    tracing::info!("Batch processor started with batch size = '{batch_size}' and interval = '{interval:?}'");
+
     loop {
         // Check processor state for pause/stop control
         let state_value = app_state
