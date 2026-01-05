@@ -100,7 +100,6 @@ struct Args {
     #[arg(long, default_value_t = 50)]
     max_concurrent: usize,
 }
-
 /// A leaf waiting to be verified via HTTP
 struct PendingLeaf {
     /// The leaf hash
@@ -136,6 +135,10 @@ struct HttpLoadStats {
     total_latency_ms: u64,
     /// Number of errors encountered
     errors: u64,
+    /// Total time spent processing inclusion proofs (ms)
+    inclusion_processing_time_ms: u64,
+    /// Total leaves processed for inclusion proofs (includes retries)
+    inclusion_leaves_processed: u64,
 }
 
 impl HttpLoadState {
@@ -313,9 +316,16 @@ async fn main() -> Result<()> {
             } else {
                 0
             };
+            // Calculate verification rate: proofs per second
+            let inc_rate = if stats.inclusion_processing_time_ms > 0 {
+                (stats.inclusion_leaves_processed as f64 * 1000.0) / stats.inclusion_processing_time_ms as f64
+            } else {
+                0.0
+            };
             print!(
-                " | HTTP: {} inc (avg {}ms), {} con verified | {} errors",
+                " | HTTP: {} inc @ {:.0}/s (avg {}ms), {} con verified | {} errors",
                 stats.inclusion_proofs_verified,
+                inc_rate,
                 avg_latency,
                 stats.consistency_proofs_verified,
                 stats.errors
@@ -538,6 +548,49 @@ async fn process_single_leaf(client: &Client, leaf: PendingLeaf) -> LeafProcessR
         error_message: None,
     };
 
+    // 1. Check if leaf exists (Guard Clause)
+    let exists = match client.has_leaf_hash(&leaf.log_name, &leaf.hash).await {
+        Ok(v) => v,
+        Err(e) => {
+            result.errors = 1;
+            result.error_message = Some(format!("❌ has_leaf request failed: {e}"));
+            return result;
+        }
+    };
+
+    // 2. Handle non-existence early
+    if !exists {
+        result.retry = Some(leaf);
+        return result;
+    }
+
+    // 3. Request inclusion proof (Guard Clause)
+    let proof = match client.get_inclusion_proof(&leaf.log_name, &leaf.hash).await {
+        Ok(v) => v,
+        Err(e) => {
+            result.errors = 1;
+            result.error_message = Some(format!("❌ Failed to get inclusion proof: {e}"));
+            return result;
+        }
+    };
+
+    // 4. Verify proof (Guard Clause)
+    if let Err(e) = client.verify_inclusion_proof(&leaf.hash, &proof) {
+        result.errors = 1;
+        result.error_message = Some(format!(
+            "❌ Inclusion proof verification failed for log {}: {e}",
+            leaf.log_name
+        ));
+        return result;
+    }
+
+    // 5. Success Path (No indentation needed)
+    result.inclusion_proofs_verified = 1;
+    result.latency_ms = leaf.insert_time.elapsed().as_millis() as u64;
+
+    result
+
+    /*
     // Check if leaf exists yet
     match client.has_leaf_hash(&leaf.log_name, &leaf.hash).await {
         Ok(exists) => {
@@ -577,7 +630,7 @@ async fn process_single_leaf(client: &Client, leaf: PendingLeaf) -> LeafProcessR
         }
     }
 
-    result
+    result*/
 }
 
 /// Process pending leaves by verifying their inclusion proofs (concurrent with limit)
@@ -586,7 +639,7 @@ async fn process_pending_leaves(
     state: &Arc<Mutex<HttpLoadState>>,
     max_concurrent: usize,
 ) {
-    // Take all pending leaves to process
+    // Take up to max_batch_size pending leaves to process (avoids overhead with huge queues)
     let to_process: Vec<PendingLeaf> = {
         let mut state = state.lock().await;
         state.pending.drain(..).collect()
@@ -596,12 +649,16 @@ async fn process_pending_leaves(
         return;
     }
 
+    let num_leaves = to_process.len() as u64;
+
     // Process leaves with bounded concurrency
+    let start = Instant::now();
     let results: Vec<LeafProcessResult> = stream::iter(to_process)
         .map(|leaf| process_single_leaf(client, leaf))
         .buffer_unordered(max_concurrent)
         .collect()
         .await;
+    let processing_time_ms = start.elapsed().as_millis() as u64;
 
     // Aggregate results
     let mut still_pending = Vec::new();
@@ -632,6 +689,8 @@ async fn process_pending_leaves(
         state.stats.inclusion_proofs_verified += total_inclusion_proofs_verified;
         state.stats.total_latency_ms += total_latency_ms;
         state.stats.errors += total_errors;
+        state.stats.inclusion_processing_time_ms += processing_time_ms;
+        state.stats.inclusion_leaves_processed += num_leaves;
 
         // Put still-pending leaves back at front
         for leaf in still_pending.into_iter().rev() {

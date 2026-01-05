@@ -10,6 +10,7 @@
 //! ```bash
 //! cargo run --bin main
 //! cargo run --bin main -- --verify-db
+//! cargo run --bin main -- --workers 8
 //! ```
 //!
 //! The `--verify-db` flag validates the database schema without starting the server.
@@ -19,10 +20,30 @@ use trellis::service;
 use std::str::FromStr;
 use std::net::SocketAddr;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
+    // Parse command line arguments
+    let args: Vec<String> = std::env::args().collect();
+    let verify_db = args.contains(&"--verify-db".to_string());
+    
+    let worker_threads = num_cpus::get();
+    // Build tokio runtime with configurable parameters
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_all()
+        .thread_name("trellis-worker")
+        // Increase thread stack size (default is 2MB)
+        .thread_stack_size(4 * 1024 * 1024)
+        .build()?;
+
+    println!("Tokio runtime: {worker_threads} worker threads");
+
+    runtime.block_on(async_main(verify_db))
+}
+
+/// Server entry point
+async fn async_main(verify_db: bool) -> Result<()> {
     // Initialize tracing subscriber
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -30,10 +51,6 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
-
-    // Parse command line arguments
-    let args: Vec<String> = std::env::args().collect();
-    let verify_db = args.contains(&"--verify-db".to_string());
 
     // Initialize application state (database connection + merkle state)
     let app_state = service::initialize_app_state().await?;
