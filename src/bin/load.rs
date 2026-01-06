@@ -589,48 +589,6 @@ async fn process_single_leaf(client: &Client, leaf: PendingLeaf) -> LeafProcessR
     result.latency_ms = leaf.insert_time.elapsed().as_millis() as u64;
 
     result
-
-    /*
-    // Check if leaf exists yet
-    match client.has_leaf_hash(&leaf.log_name, &leaf.hash).await {
-        Ok(exists) => {
-            if !exists {
-                // Not yet processed, put back in queue
-                result.retry = Some(leaf);
-                return result;
-            }
-
-            // Leaf exists, request and verify inclusion proof
-            match client.get_inclusion_proof(&leaf.log_name, &leaf.hash).await {
-                Ok(proof) => {
-                    // Verify the proof
-                    match client.verify_inclusion_proof(&leaf.hash, &proof) {
-                        Ok(()) => {
-                            result.inclusion_proofs_verified = 1;
-                            result.latency_ms = leaf.insert_time.elapsed().as_millis() as u64;
-                        }
-                        Err(e) => {
-                            result.errors = 1;
-                            result.error_message = Some(format!(
-                                "❌ Inclusion proof verification failed for log {}: {e}",
-                                leaf.log_name
-                            ));
-                        }
-                    }
-                }
-                Err(e) => {
-                    result.errors = 1;
-                    result.error_message = Some(format!("❌ Failed to get inclusion proof: {e}"));
-                }
-            }
-        }
-        Err(e) => {
-            result.errors = 1;
-            result.error_message = Some(format!("❌ has_leaf request failed: {e}"));
-        }
-    }
-
-    result*/
 }
 
 /// Process pending leaves by verifying their inclusion proofs (concurrent with limit)
@@ -728,25 +686,32 @@ async fn test_single_consistency_proof(
     log_name: String,
     old_root_hash: Vec<u8>,
 ) -> ConsistencyProofResult {
-    match client.get_consistency_proof(&log_name, old_root_hash.clone()).await {
-        Ok(proof) => match client.verify_consistency_proof(&old_root_hash, &proof) {
-            Ok(()) => ConsistencyProofResult {
-                verified: true,
-                error_message: None,
-            },
-            Err(e) => ConsistencyProofResult {
+    // Get consistency proof
+    let proof = match client.get_consistency_proof(&log_name, old_root_hash.clone()).await {
+        Ok(p) => p,
+        Err(e) => {
+            return ConsistencyProofResult {
                 verified: false,
                 error_message: Some(format!(
-                    "❌ Consistency proof verification failed for log {log_name}: {e}"
+                    "❌ Failed to get consistency proof for log {log_name}: {e}"
                 )),
-            },
-        },
-        Err(e) => ConsistencyProofResult {
+            };
+        }
+    };
+
+    // Verify consistency proof
+    if let Err(e) = client.verify_consistency_proof(&old_root_hash, &proof) {
+        return ConsistencyProofResult {
             verified: false,
             error_message: Some(format!(
-                "❌ Failed to get consistency proof for log {log_name}: {e}"
+                "❌ Consistency proof verification failed for log {log_name}: {e}"
             )),
-        },
+        };
+    }
+
+    ConsistencyProofResult {
+        verified: true,
+        error_message: None,
     }
 }
 

@@ -436,18 +436,6 @@ async fn copy_source_rows(
     // Advisory lock prevents concurrent execution for this specific log
     get_advisory_lock(log_name, &txn).await?;
     
-    /* let lock_id = hash_string_to_i64(log_name);
-    let lock_acquired: bool = txn
-        .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&lock_id])
-        .await?
-        .get(0);
-    
-    if !lock_acquired {
-        return Err(anyhow::anyhow!(
-            "Another processing batch is running for log '{log_name}'"
-        ));
-    }*/
-    
     // Increase work_mem for the sort operation in the CTE
     // Default PostgreSQL work_mem (4MB) may cause disk-based sorts for large batches
     // Testing showed minimal impact (~8ms difference), so 32MB is sufficient
@@ -774,6 +762,10 @@ fn hash_string_to_i64(s: &str) -> i64 {
 }
 
 /// Acquires an advisory lock for the given log name within the provided transaction.
+/// 
+/// # Errors
+/// Returns an error if the lock cannot be acquired, indicating that another
+/// processing batch is already running for the specified log.
 async fn get_advisory_lock(log_name: &str, txn: &tokio_postgres::Transaction<'_>) -> Result<()> {
     // Advisory lock prevents concurrent execution for this specific log
     let lock_id = hash_string_to_i64(log_name);
