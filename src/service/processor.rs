@@ -181,10 +181,17 @@ impl SourceConfig {
 /// Note: each log is processed serially, but errors are independently handled: an error 
 /// in one log does not affect others.
 pub async fn run_batch_processor(app_state: AppState) {
-    let batch_size: u32 = 30000;
-    let interval = std::time::Duration::from_secs(1);
+    let batch_size: u32 = std::env::var("TRELLIS_BATCH_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30000);
+    let interval = std::env::var("TRELLIS_BATCH_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let interval_d = std::time::Duration::from_secs(interval);
 
-    tracing::info!("Batch processor started with batch size = '{batch_size}' and interval = '{interval:?}'");
+    tracing::info!("Batch processor started with batch size = '{batch_size}' and interval = '{interval_d:?}'");
 
     loop {
         // Check processor state for pause/stop control
@@ -195,7 +202,7 @@ pub async fn run_batch_processor(app_state: AppState) {
             1 => {
                 // Paused - sleep and continue
                 tracing::info!("Batch processor paused");
-                tokio::time::sleep(interval).await;
+                tokio::time::sleep(interval_d).await;
                 continue;
             }
             2 => {
@@ -213,7 +220,7 @@ pub async fn run_batch_processor(app_state: AppState) {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to get connection for loading logs");
-                tokio::time::sleep(interval).await;
+                tokio::time::sleep(interval_d).await;
                 continue;
             }
         };
@@ -226,7 +233,7 @@ pub async fn run_batch_processor(app_state: AppState) {
             Ok(names) => names,
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to load enabled logs");
-                tokio::time::sleep(interval).await;
+                tokio::time::sleep(interval_d).await;
                 continue;
             }
         };
@@ -259,11 +266,11 @@ pub async fn run_batch_processor(app_state: AppState) {
 
         // Update global metrics
         app_state.metrics.update_global_metrics(|global| {
-            global.record_cycle(u64_millis(elapsed.as_millis()), log_names.len(), &interval);
+            global.record_cycle(u64_millis(elapsed.as_millis()), log_names.len(), &interval_d);
         });
 
         // Wait for next interval
-        tokio::time::sleep(interval).await;
+        tokio::time::sleep(interval_d).await;
     }
 
     tracing::info!("Batch processor stopped");

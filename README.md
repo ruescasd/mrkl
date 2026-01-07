@@ -31,6 +31,8 @@ Trellis provides **tamper-evident append-only logs** for PostgreSQL tables using
   DATABASE_URL=postgres://user:password@localhost/dbname
   # The following are optional, with given default values
   TRELLIS_SERVER_ADDR=127.0.0.1:3000
+  TRELLIS_BATCH_INTERVAL_SECS=1
+  TRELLIS_BATCH_SIZE=30000
   TRELLIS_SERVER_URL=http://localhost:3000
   TRELLIS_DASHBOARD_REFRESH_INTERVAL=1
   ```
@@ -75,7 +77,7 @@ This binary runs
 cargo run --example post
 ```
 
-This example
+This [example](examples/post.rs)
 1. Simulates a post to a verification source
 2. Waits for the new entry to be aggregated into the log
 3. Requests a proof of inclusion for the entry
@@ -90,7 +92,7 @@ In order to work as a self-contained example, it also creates a sample `verifica
 cargo run --example monitor -- example_post_log
 ```
 
-This example
+This [example](examples/monitor.rs)
 1. Polls a verification log for changes in the log root
 2. When a change is detected, requests a proof of consistency with respect to the previous root.
 3. Verifies the proof of consistency
